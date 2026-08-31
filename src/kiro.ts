@@ -222,16 +222,27 @@ function assistantText(message: Extract<Context["messages"][number], { role: "as
     .trim();
 }
 
+/** Normalise a tool-call ID to a form the Kiro API accepts.
+ * Some providers (openai-codex, gpt-5.6-*) append a second identifier after
+ * a pipe character, e.g. "call_abc|fc_074b...". The Kiro CodeWhisperer API
+ * rejects toolUseId values that contain "|", responding with HTTP 400
+ * "Invalid tool use format." Strip the suffix so only the primary ID is sent.
+ */
+function normaliseToolUseId(id: string): string {
+  const pipeIdx = id.indexOf("|");
+  return pipeIdx === -1 ? id : id.slice(0, pipeIdx);
+}
+
 function assistantToolUses(message: Extract<Context["messages"][number], { role: "assistant" }>): Array<{ toolUseId: string; name: string; input: Record<string, unknown> }> | undefined {
   const toolUses = message.content
     .filter((part): part is ToolCall => part.type === "toolCall")
-    .map((part) => ({ toolUseId: part.id, name: part.name, input: parseToolInput(part.arguments) }));
+    .map((part) => ({ toolUseId: normaliseToolUseId(part.id), name: part.name, input: parseToolInput(part.arguments) }));
   return toolUses.length > 0 ? toolUses : undefined;
 }
 
 function toolResultFromMessage(message: Extract<Context["messages"][number], { role: "toolResult" }>): KiroToolResult {
   return {
-    toolUseId: message.toolCallId,
+    toolUseId: normaliseToolUseId(message.toolCallId),
     status: message.isError ? "error" : "success",
     content: [{ text: textFromContent(message.content) }],
   };
