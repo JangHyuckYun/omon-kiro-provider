@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.0-native.1 - 2026-09-29
+
+OMO Native 5.1 hardened fork release.
+
+### Added
+
+- `claude-opus-5.5` model metadata: 1M context, 128K output, 2.0x credits.
+- Native `max` thinking metadata and Kiro-wide default `compactionTriggerRatio: 0.8`.
+- Fail-closed OMO Native engine setup/check/restore workflow with version and fingerprint gates.
+- Native compatibility regression coverage for schema, stream, tools, history, abort, diagnostics, retry, and compaction boundaries.
+- Korean fork status, installation, update, rollback, and verification documentation.
+
+### Fixed
+
+- Top-level tool schema combinators rejected by Kiro.
+- JSON-array tool payloads and malformed event-stream prefix recovery.
+- Interleaved tool block ordering and buffered usage double counting.
+- Mixed assistant text/tool history and truncated conversation identity.
+- Cross-provider pipe-compound tool IDs.
+- Stalled payload/response hooks and provider abort provenance.
+- Native provider diagnostics, custom provider IDs, and Retry-After markers.
+- Kiro API-key `tokentype` header handling.
+- Optional OAuth registration for current Native package APIs.
+
+### Compatibility
+
+- Engine patch profile: `omo-ai@5.1.0`, `@code-yeongyu/senpi@2026.9.28-7`.
+- The npm `pi-kiro-provider` package remains the upstream project; install this fork by Git URL.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

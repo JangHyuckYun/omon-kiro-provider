@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "patchId": "omo-native-5.1-compaction-ratio-v1",
+  "omoVersion": "5.1.0",
+  "senpiVersion": "2026.9.28-7",
+  "engineRelativePath": "node_modules/@code-yeongyu/senpi/dist/core/agent-session.js",
+  "pristineSha256": "28e3466d8f8564b8abf8f63fa4066f39dd47d631b4a6e40db00b8dc5a57013fb",
+  "patchedSha256": "32c215771a50292f10f26c120e7bc6e0a67a7289eeb7371b3e4ac1822f68e1a6"
+}

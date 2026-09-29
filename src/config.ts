@@ -8,7 +8,7 @@ import { isRecord, optionalString, positiveFiniteNumber as numberOr } from "./sh
 
 export const KIRO_API = "kiro" as const;
 
-export type ThinkingLevelKey = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevelKey = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ThinkingLevelMap = Partial<Record<ThinkingLevelKey, string | null>>;
 
 export interface KiroPromptCachingConfig {
@@ -23,6 +23,13 @@ export type KiroProviderModelConfig = ProviderModelConfig & {
   rateMultiplier?: number;
   rateUnit?: string;
   promptCaching?: KiroPromptCachingConfig;
+  /**
+   * Optional legacy engine-side compaction window. The real backend context
+   * remains `contextWindow`; this value affects proactive compaction only.
+   */
+  compactionContextWindow?: number;
+  /** Fraction of the real model context that triggers proactive compaction. */
+  compactionTriggerRatio?: number;
 };
 
 export type KiroAuthMethod = "builder-id" | "google" | "github";
@@ -74,15 +81,19 @@ export interface ConfigLoadResult {
 type RawModel = Record<string, unknown>;
 
 const KIRO_MAX_OUTPUT_TOKENS = 32_000;
+const KIRO_OPUS_55_MAX_OUTPUT_TOKENS = 128_000;
+const KIRO_PROMPT_CACHING_512 = { supportsPromptCaching: true, minimumTokensPerCacheCheckpoint: 512 } satisfies KiroPromptCachingConfig;
 const KIRO_PROMPT_CACHING_1024 = { supportsPromptCaching: true, maximumCacheCheckpointsPerRequest: 4, minimumTokensPerCacheCheckpoint: 1_024 } satisfies KiroPromptCachingConfig;
 const KIRO_PROMPT_CACHING_4096 = { supportsPromptCaching: true, maximumCacheCheckpointsPerRequest: 4, minimumTokensPerCacheCheckpoint: 4_096 } satisfies KiroPromptCachingConfig;
 const KIRO_PROMPT_CACHING_DISABLED = { supportsPromptCaching: false } satisfies KiroPromptCachingConfig;
-const ANTHROPIC_REASONING_MAP = { off: "disabled", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: null } satisfies ThinkingLevelMap;
+const ANTHROPIC_REASONING_MAP = { off: "disabled", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: null, max: null } satisfies ThinkingLevelMap;
 const ANTHROPIC_OPUS_4_7_REASONING_MAP = { ...ANTHROPIC_REASONING_MAP, xhigh: "xhigh" } satisfies ThinkingLevelMap;
-const ANTHROPIC_MAX_REASONING_MAP = { ...ANTHROPIC_REASONING_MAP, xhigh: "max" } satisfies ThinkingLevelMap;
+const ANTHROPIC_MAX_REASONING_MAP = { ...ANTHROPIC_REASONING_MAP, xhigh: "max", max: "max" } satisfies ThinkingLevelMap;
+const ANTHROPIC_OPUS_55_REASONING_MAP = { ...ANTHROPIC_MAX_REASONING_MAP, off: null } satisfies ThinkingLevelMap;
 
 function defaultThinkingLevelMapForModel(id: string, name: string): ThinkingLevelMap | undefined {
   const identity = `${id} ${name}`.toLowerCase();
+  if (/claude[-\s_/]*opus[-\s_/]*5[.-]?5\b/.test(identity)) return { ...ANTHROPIC_OPUS_55_REASONING_MAP };
   if (/claude[-\s_/]*opus[-\s_/]*4[.-]?7\b/.test(identity)) return { ...ANTHROPIC_OPUS_4_7_REASONING_MAP };
   if (/claude[-\s_/]*(?:opus|sonnet)[-\s_/]*4[.-]?6\b/.test(identity)) return { ...ANTHROPIC_MAX_REASONING_MAP };
   return undefined;
@@ -90,6 +101,7 @@ function defaultThinkingLevelMapForModel(id: string, name: string): ThinkingLeve
 
 const DEFAULT_MODELS: RawModel[] = [
   { id: "auto", name: "Auto", reasoning: true, contextWindow: 1_000_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 1.0, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_1024, importOwnership: "model-discovery" },
+  { id: "claude-opus-5.5", name: "Claude Opus 5.5", reasoning: true, thinkingLevelMap: ANTHROPIC_OPUS_55_REASONING_MAP, contextWindow: 1_000_000, maxTokens: KIRO_OPUS_55_MAX_OUTPUT_TOKENS, rateMultiplier: 2.0, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_512, importOwnership: "model-discovery" },
   { id: "claude-opus-4.7", name: "Claude Opus 4.7", reasoning: true, thinkingLevelMap: ANTHROPIC_OPUS_4_7_REASONING_MAP, contextWindow: 1_000_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 2.2, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_4096, importOwnership: "model-discovery" },
   { id: "claude-opus-4.6", name: "Claude Opus 4.6", reasoning: true, thinkingLevelMap: ANTHROPIC_MAX_REASONING_MAP, contextWindow: 1_000_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 2.2, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_4096, importOwnership: "model-discovery" },
   { id: "claude-sonnet-4.6", name: "Claude Sonnet 4.6", reasoning: true, thinkingLevelMap: ANTHROPIC_MAX_REASONING_MAP, contextWindow: 1_000_000, maxTokens: KIRO_MAX_OUTPUT_TOKENS, rateMultiplier: 1.3, rateUnit: "Credit", promptCaching: KIRO_PROMPT_CACHING_1024, importOwnership: "model-discovery" },
@@ -109,6 +121,7 @@ const DEFAULT_MODEL_DEFAULTS = {
   input: ["text"] as Array<"text" | "image">,
   contextWindow: 200_000,
   maxTokens: KIRO_MAX_OUTPUT_TOKENS,
+  compactionTriggerRatio: 0.8,
   cost: {
     input: 0,
     output: 0,
@@ -141,7 +154,7 @@ const DEFAULT_OAUTH_CONFIG: KiroOAuthConfig = {
   },
 };
 
-const THINKING_LEVEL_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const THINKING_LEVEL_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 function stringOr(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
@@ -191,6 +204,13 @@ function inputOr(value: unknown, fallback: Array<"text" | "image">): Array<"text
 
 function nonNegativeCostOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function ratioOr(value: unknown, fallback?: number): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 1) {
+    return value;
+  }
+  return fallback;
 }
 
 function costOr(value: unknown, fallback: ProviderModelConfig["cost"]): ProviderModelConfig["cost"] {
@@ -260,6 +280,8 @@ function modelDefaultsFrom(raw: Record<string, unknown>, warnings: string[]): Om
     compat: recordOr(defaults.compat) as ProviderModelConfig["compat"],
     importOwnership: optionalString(defaults.importOwnership),
     promptCaching: promptCachingOr(defaults.promptCaching),
+    compactionContextWindow: numberOr(defaults.compactionContextWindow, 0) || undefined,
+    compactionTriggerRatio: ratioOr(defaults.compactionTriggerRatio, DEFAULT_MODEL_DEFAULTS.compactionTriggerRatio),
   };
 }
 
@@ -286,9 +308,11 @@ function normalizeModel(rawModel: unknown, defaults: Omit<KiroProviderModelConfi
     rateMultiplier: typeof rawModel.rateMultiplier === "number" && Number.isFinite(rawModel.rateMultiplier) ? rawModel.rateMultiplier : defaults.rateMultiplier,
     rateUnit: optionalString(rawModel.rateUnit) ?? defaults.rateUnit,
     promptCaching: promptCachingOr(rawModel.promptCaching, defaults.promptCaching),
+    compactionContextWindow: numberOr(rawModel.compactionContextWindow, defaults.compactionContextWindow ?? 0) || undefined,
+    compactionTriggerRatio: ratioOr(rawModel.compactionTriggerRatio, defaults.compactionTriggerRatio),
   };
 
-  for (const key of ["thinkingLevelMap", "headers", "compat", "importOwnership", "rateMultiplier", "rateUnit", "promptCaching"] as const) {
+  for (const key of ["thinkingLevelMap", "headers", "compat", "importOwnership", "rateMultiplier", "rateUnit", "promptCaching", "compactionContextWindow", "compactionTriggerRatio"] as const) {
     if (model[key] === undefined) delete model[key];
   }
   return model;

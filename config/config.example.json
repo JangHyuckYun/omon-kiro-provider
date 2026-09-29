@@ -9,6 +9,9 @@
   "requestTimeoutMs": 600000,
   "profileArn": "",
   "headers": {},
+  "modelDefaults": {
+    "compactionTriggerRatio": 0.8
+  },
   "oauth": {
     "region": "us-east-1",
     "startUrl": "https://view.awsapps.com/start",

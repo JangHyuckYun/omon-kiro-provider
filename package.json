@@ -1,8 +1,8 @@
 {
   "name": "pi-kiro-provider",
-  "version": "0.2.2",
+  "version": "0.3.0-native.1",
   "private": false,
-  "description": "Pi extension provider for Kiro's AWS CodeWhisperer streaming API.",
+  "description": "OMO Native-hardened Pi extension provider for Kiro's AWS CodeWhisperer streaming API.",
   "type": "module",
   "main": "./index.ts",
   "exports": {
@@ -11,6 +11,11 @@
   "files": [
     "index.ts",
     "src",
+    "compat",
+    "docs",
+    "scripts",
+    "tests",
+    "tsconfig.json",
     "config/config.example.json",
     "README.md",
     "CHANGELOG.md",
@@ -26,10 +31,15 @@
     "build": "npm run typecheck",
     "lint": "node scripts/audit-terminal.mjs",
     "test": "node scripts/run-tests.mjs",
+    "test:install": "node scripts/test-install-fixture.mjs",
+    "test:omo": "node scripts/test-omo-smoke.mjs",
     "check": "npm run typecheck && npm run --silent lint && npm run test && npm run build",
+    "setup:native": "node scripts/patch-omo-native.mjs",
+    "check:native": "node scripts/patch-omo-native.mjs --check",
+    "restore:native": "node scripts/patch-omo-native.mjs --restore",
     "package:dry-run": "npm pack --dry-run",
     "prepublishOnly": "npm run check",
-    "postinstall": "node -e \"const fs=require('fs'),cp=require('child_process'),p=require('path');const cwd=process.cwd();const normalized=cwd.split(p.sep).join('/');if(!normalized.includes('/.pi/agent/extensions/'))process.exit(0);const s=p.resolve(cwd,'../../scripts/patch-vulnerable-deps.mjs');if(!fs.existsSync(s))process.exit(0);const r=cp.spawnSync(process.execPath,[s,'--target',cwd,'--quiet'],{stdio:'inherit'});process.exit(r.status||0)\""
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "keywords": [
     "pi-package",
@@ -44,14 +54,17 @@
     "amazon-q"
   ],
   "author": "MasuRii",
+  "contributors": [
+    "JangHyuck Yun"
+  ],
   "license": "MIT",
-  "homepage": "https://github.com/MasuRii/pi-kiro-provider#readme",
+  "homepage": "https://github.com/JangHyuckYun/pi-kiro-provider#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MasuRii/pi-kiro-provider.git"
+    "url": "git+https://github.com/JangHyuckYun/pi-kiro-provider.git"
   },
   "bugs": {
-    "url": "https://github.com/MasuRii/pi-kiro-provider/issues"
+    "url": "https://github.com/JangHyuckYun/pi-kiro-provider/issues"
   },
   "engines": {
     "node": ">=20"

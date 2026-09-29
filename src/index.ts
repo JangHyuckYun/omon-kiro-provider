@@ -3,13 +3,15 @@ import { fileURLToPath } from "node:url";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import { registerOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import * as _oauthModule from "@earendil-works/pi-ai/oauth";
 
 import { KIRO_API, type ExtensionConfig, loadConfig } from "./config.js";
 import { DebugLogger } from "./debug-logger.js";
 import type { DebugLogger as DebugLoggerInstance } from "./debug-logger.js";
 import { omitAuthorizationHeaders } from "./headers.js";
 import { createKiroOAuthProvider } from "./oauth.js";
+
+const registerOAuthProvider = (_oauthModule as unknown as { registerOAuthProvider?: (p: unknown) => void }).registerOAuthProvider;
 
 const EXTENSION_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const RUNTIME_PROVIDER_REGISTRATION_EVENT = "pi-multi-auth:runtime-provider-registration";
@@ -76,7 +78,7 @@ export default function kiroProviderExtension(pi: ExtensionAPI): void {
     providerId: config.providerId,
     displayName: config.displayName,
   });
-  registerOAuthProvider(oauthProvider);
+  if (typeof registerOAuthProvider === "function") registerOAuthProvider(oauthProvider as never);
 
   const runtime: KiroRuntimeState = {};
   const streamSimple = createLazyKiroStream(config, runtime, logger);

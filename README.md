@@ -1,159 +1,191 @@
 <div align="center">
 
-# pi-kiro-provider
+# pi-kiro-provider - OMO Native hardened fork
 
-[![npm version](https://img.shields.io/npm/v/pi-kiro-provider?style=for-the-badge)](https://www.npmjs.com/package/pi-kiro-provider)
-[![License](https://img.shields.io/github/license/MasuRii/pi-kiro-provider?style=for-the-badge)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=for-the-badge)]()
+[![License](https://img.shields.io/github/license/JangHyuckYun/pi-kiro-provider?style=for-the-badge)](LICENSE)
+[![Upstream](https://img.shields.io/badge/upstream-MasuRii%2Fpi--kiro--provider-blue?style=for-the-badge)](https://github.com/MasuRii/pi-kiro-provider)
+[![OMO Native](https://img.shields.io/badge/OMO%20Native-5.1.0-green?style=for-the-badge)](https://github.com/code-yeongyu/oh-my-openagent)
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Y8Y01PSSVR)
-
-`pi-kiro-provider` is a Pi extension that registers Kiro as a streaming AI provider backed by Kiro's AWS CodeWhisperer-compatible API and OAuth flow.
-- **Provider ID:** `kiro`
-- **npm:** https://www.npmjs.com/package/pi-kiro-provider
-- **GitHub:** https://github.com/MasuRii/pi-kiro-provider
+Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적으로 사용하기 위한 `pi-kiro-provider` 포크입니다.
 
 </div>
 
-## Features
+## 상태와 출처
 
-- Registers the Kiro provider through Pi's provider API with `authHeader: false` so credentials stay managed by the OAuth provider path.
-- Registers a Kiro OAuth provider with Builder ID, Google, and GitHub sign-in method labels.
-- Replays runtime provider registration events for `pi-multi-auth` readiness and Pi session lifecycle events.
-- Provides configurable model metadata, thinking-level mappings, prompt-caching metadata, request timeout, headers, and optional Kiro profile ARN support.
-- Drops static `Authorization` header overrides so managed OAuth credentials cannot be bypassed by config.
-- Writes optional debug logs only under the extension-local `debug/` directory when `debug` is enabled.
+- 원본 프로젝트: [`MasuRii/pi-kiro-provider`](https://github.com/MasuRii/pi-kiro-provider)
+- 이 포크: [`JangHyuckYun/pi-kiro-provider`](https://github.com/JangHyuckYun/pi-kiro-provider)
+- 원본 기준 버전: `0.2.2`
+- 포크 버전: `0.3.0-native.1`
+- 검증 대상: OMO Native `5.1.0`, senpi `2026.9.28-7`
+- npm의 `pi-kiro-provider` 이름은 여전히 원본 프로젝트를 가리킵니다. 이 포크는 GitHub 주소로 설치해야 합니다.
 
-## Installation
+원본 기능과 MIT 라이선스를 유지하면서 OMO Native의 provider, tool, event-stream, diagnostics, compaction 계약에 맞춘 호환성 수정과 회귀 테스트를 추가했습니다.
 
-### npm package
+자세한 변경 내용과 운영 절차:
 
-```bash
-pi install npm:pi-kiro-provider
+- [OMO Native 하드닝·포크 현황·운영 문서](docs/OMO_NATIVE_HARDENING.ko.md)
+- [변경 이력](CHANGELOG.md)
+
+## 주요 변경
+
+- `kiro/claude-opus-5.5`: 1M context, 128K output, 2.0x credit, adaptive/max thinking metadata
+- 모든 Kiro 모델의 proactive compaction 기본값: 실제 context window의 정확히 80%
+- top-level `oneOf` / `anyOf` / `allOf` tool schema를 Kiro 허용 object schema로 정규화
+- JSON-array tool payload와 깨진 event-stream prefix 복구
+- 병렬/interleaved tool event를 Native content-block 순서로 직렬화
+- mixed assistant text + tool history, full conversation affinity, cross-provider pipe tool ID 보존
+- timeout/abort listener 정리, injected fetch, Native provider diagnostics, `Retry-After` marker
+- Kiro API key의 `tokentype: API_KEY` 헤더
+- OMO Native engine의 80% compaction 정책을 설치·검사·복원하는 fail-closed 도구
+
+## OMO Native 설치
+
+### 권장: settings.json에서 Git commit 고정
+
+`~/.omo/agent/settings.json`의 `packages`에 다음 항목을 사용합니다.
+
+```json
+{
+  "packages": [
+    "git:github.com/JangHyuckYun/pi-kiro-provider@main"
+  ]
+}
 ```
 
-### Git repository
+재현 가능한 환경에서는 `main` 대신 검증된 전체 commit SHA를 권장합니다.
 
-```bash
-pi install git:github.com/MasuRii/pi-kiro-provider
+```json
+"git:github.com/JangHyuckYun/pi-kiro-provider@<FULL_COMMIT_SHA>"
 ```
 
-### Local extension folder
+그 다음 OMO를 새로 시작합니다. 설치 lifecycle이 허용된 환경에서는 provider 설치 후 OMO Native engine compatibility patch가 자동 적용됩니다. 패치가 새로 적용되었다면 실행 중인 모든 OMO 프로세스를 종료하고 다시 시작해야 합니다.
 
-Place this folder in one of Pi's extension discovery paths:
+### 수동 설치
 
-| Scope | Path |
-|-------|------|
-| Global default | `~/.pi/agent/extensions/pi-kiro-provider` (respects `PI_CODING_AGENT_DIR`) |
-| Project | `.pi/extensions/pi-kiro-provider` |
+```bash
+mkdir -p ~/.omo/agent/npm
+cd ~/.omo/agent/npm
+npm install --save github:JangHyuckYun/pi-kiro-provider
+```
 
-Pi discovers the extension through the root `index.ts` entry listed in `package.json`.
+설치 후 명시적으로 검사할 수 있습니다.
 
-## Configuration
+```bash
+cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+npm run check:native
+```
 
-Runtime configuration lives in `config.json` at the extension root. The file is user-local, gitignored, and excluded from npm package contents. A starter template is included at `config/config.example.json`.
+Lifecycle script가 비활성화된 설치에서는 직접 적용합니다.
 
-Copy the template before customizing local settings:
+```bash
+npm run setup:native
+npm run check:native
+```
+
+## 지원 범위
+
+현재 engine patch profile은 다음 조합만 fail-closed 방식으로 지원합니다.
+
+| Component | Supported version |
+|---|---:|
+| `omo-ai` | `5.1.0` |
+| `@code-yeongyu/senpi` | `2026.9.28-7` |
+| Host | macOS/Linux 검증, Windows 미검증 |
+
+알 수 없는 engine fingerprint, 다른 OMO/senpi 버전, 중복 engine 후보, 부분 패치 상태에서는 engine 파일을 수정하지 않고 오류를 반환합니다.
+
+## 인증
+
+Provider ID는 `kiro`입니다. OAuth provider는 다음 로그인 방식을 제공합니다.
+
+- AWS Builder ID
+- Google
+- GitHub
+
+OMO에서 `/login kiro`를 사용하거나, 기존 Kiro credential 관리 경로를 사용할 수 있습니다. 정적 `Authorization` header 설정은 의도적으로 제거됩니다.
+
+## 설정
+
+기본 설정만 사용할 때는 `config.json`이 필요하지 않습니다. 사용자 설정이 필요하면:
 
 ```bash
 cp config/config.example.json config.json
 ```
 
-Minimal default-compatible configuration:
+중요 기본값:
 
 ```json
 {
-  "enabled": true,
   "debug": false,
-  "providerId": "kiro",
-  "displayName": "Kiro",
-  "upstreamUrl": "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse",
-  "endpoint": "codewhisperer",
-  "apiKey": "$KIRO_ACCESS_TOKEN",
-  "requestTimeoutMs": 600000,
-  "profileArn": "",
-  "headers": {},
-  "oauth": {
-    "region": "us-east-1",
-    "startUrl": "https://view.awsapps.com/start",
-    "clientName": "kiro-oauth-client",
-    "clientType": "public",
-    "scopes": [
-      "codewhisperer:completions",
-      "codewhisperer:analysis",
-      "codewhisperer:conversations"
-    ],
-    "grantTypes": [
-      "urn:ietf:params:oauth:grant-type:device_code",
-      "refresh_token"
-    ],
-    "issuerUrl": "https://identitycenter.amazonaws.com/ssoins-722374e8c3c8e6c6",
-    "skipIssuerUrlForRegistration": false,
-    "socialPortalUrl": "https://app.kiro.dev/signin",
-    "socialPortalRedirectUri": "http://localhost:3128",
-    "socialCallbackPath": "/oauth/callback",
-    "socialAuthorizeUrl": "https://prod.us-east-1.auth.desktop.kiro.dev/login",
-    "socialTokenUrl": "https://prod.us-east-1.auth.desktop.kiro.dev/oauth/token",
-    "socialRefreshUrl": "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken",
-    "socialRedirectUri": "kiro://kiro.kiroAgent/authenticate-success",
-    "methodLabels": {
-      "builder-id": "AWS Builder ID",
-      "google": "Google",
-      "github": "GitHub"
-    }
+  "modelDefaults": {
+    "compactionTriggerRatio": 0.8
   }
 }
 ```
 
-### Configuration options
+`config.json`은 로컬 전용이며 Git 및 package artifact에서 제외됩니다. credential이나 access token을 저장소에 커밋하지 마십시오.
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | boolean | `true` | Enables the provider extension. |
-| `debug` | boolean | `false` | Enables file-only debug logging under `debug/debug.log`. |
-| `providerId` | string | `kiro` | Provider ID registered with Pi. |
-| `displayName` | string | `Kiro` | Human-readable provider name shown by Pi. |
-| `upstreamUrl` | string | CodeWhisperer generateAssistantResponse endpoint | Streaming API endpoint. |
-| `endpoint` | `codewhisperer` \| `amazonq` | inferred from `upstreamUrl` | Controls upstream request/response formatting. |
-| `apiKey` | string | `$KIRO_ACCESS_TOKEN` | Environment variable reference used by provider metadata. |
-| `requestTimeoutMs` | number | `600000` | Request timeout for streaming and OAuth calls. |
-| `profileArn` | string | empty | Optional Kiro profile ARN sent as `x-kiro-profile-arn`. |
-| `headers` | object | `{}` | Additional non-authorization headers sent upstream. |
-| `oauth` | object | Kiro OAuth defaults | OAuth device/social sign-in endpoint configuration. |
-| `models` | array | built-in Kiro model list | Optional replacement model list. Omit to use built-in defaults. |
-| `modelDefaults` | object | built-in model defaults | Optional defaults applied to configured models. |
+## 검증
 
-> Authorization headers configured in `headers`, `modelDefaults.headers`, or model-level `headers` are ignored intentionally. Kiro credentials are selected by the provider/OAuth integration.
-
-## Validation
+저장소 검증:
 
 ```bash
-npm run typecheck
-npm run lint
-npm run test
+npm ci --ignore-scripts
 npm run check
 npm run package:dry-run
 ```
 
-## Publishing
+설치된 OMO Native 검증:
 
-The package metadata follows the same publish-ready shape used by established Pi extensions:
+```bash
+cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+npm run check:native
 
-- entrypoint: `index.ts`
-- package exports: `.` → `./index.ts`
-- Pi extension manifest: `pi.extensions`
-- published files: source, README, changelog, license, and config template
-- runtime `config.json`, `debug/`, test artifacts, package lock, and local metadata excluded from npm publication
+OMO_CODING_AGENT_DIR="$HOME/.omo/agent" \
+SENPI_CODING_AGENT_DIR="$HOME/.omo/agent" \
+omo --list-models kiro
+```
 
-Do not publish, push, or tag until the GitHub/npm release review is complete.
+목록에는 `claude-opus-5.5`가 정확히 한 번 표시되어야 합니다.
 
-## Related Pi Extensions
+## OMO 업데이트
 
-- [pi-multi-auth](https://github.com/MasuRii/pi-multi-auth) — Multi-provider credential management, OAuth login, and account rotation
-- [pi-model-discovery](https://github.com/MasuRii/pi-model-discovery) — Provider model discovery, enrichment, and dynamic registration
-- [pi-fast-mode](https://github.com/MasuRii/pi-fast-mode) — Fast-mode toggles and priority service tier injection
-- [pi-model-profiles](https://github.com/MasuRii/pi-model-profiles) — Whole-agent model frontmatter snapshot management
+OMO 자체 업데이트는 provider package를 재설치하지 않을 수 있습니다. 업데이트 후:
+
+```bash
+cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+npm run setup:native
+npm run check:native
+```
+
+검사가 통과한 뒤 OMO를 다시 시작합니다. 지원하지 않는 새 OMO/senpi 버전에서는 patcher가 실패하며, 새 compatibility profile이 추가되기 전까지 강제로 적용하면 안 됩니다.
+
+## 롤백
+
+Engine patch를 적용할 때 원본과 receipt가 engine 파일 옆에 생성됩니다. 현재 engine이 receipt의 patched hash와 일치할 때만 복원됩니다.
+
+```bash
+cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+npm run restore:native
+```
+
+Provider 자체는 `settings.json`에서 이전 Git SHA 또는 원본 npm package로 되돌립니다. Provider rollback과 engine rollback은 별개 작업입니다.
+
+## 알려진 제한
+
+- 이 포크는 npm에 별도 배포되지 않았습니다. `npm install pi-kiro-provider`는 원본을 설치합니다.
+- 80% 도달 시 compaction은 시작되지만 Kiro summary 요청 자체가 HTTP 403을 반환할 수 있습니다. 엔진은 이 경우 fail-closed로 context를 버리지 않습니다.
+- 한 개의 매우 큰 retained turn은 compaction 후에도 80% 이상을 유지할 수 있습니다.
+- OMO/senpi 버전이 바뀌면 compatibility profile을 검토하고 갱신해야 합니다.
+
+## Upstream Pi 설치
+
+일반 Pi 환경과 upstream package가 필요하면 원본 저장소 문서를 사용하십시오.
+
+```bash
+pi install npm:pi-kiro-provider
+```
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). 원본 저작권과 upstream 이력을 유지합니다.

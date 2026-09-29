@@ -20,13 +20,29 @@ import {
 import type { ExtensionConfig } from "./config.js";
 import { redactSensitiveString } from "./debug-logger.js";
 import type { DebugLogger } from "./debug-logger.js";
-import { ByteQueue, parseEventFrame, type JsonRecord } from "./eventstream.js";
+import { ByteQueue, parseEventFrame, type EventPayload, type JsonRecord } from "./eventstream.js";
 import { omitAuthorizationHeaders } from "./headers.js";
 import { isRecord, optionalString, KIRO_PROFILE_ARN_HEADER, readJsonResponse } from "./shared/index.js";
 
 interface KiroRuntimeState {
   cwd?: string;
 }
+
+type KiroProviderDiagnostic = {
+  category: "auth" | "invalid_request" | "provider_unavailable" | "unknown";
+  httpStatus: number;
+  evidence: "structured_status";
+};
+
+type NativeSimpleStreamOptions = SimpleStreamOptions & {
+  affinitySessionId?: string;
+  fetch?: typeof globalThis.fetch;
+};
+
+type NativeAssistantMessage = AssistantMessage & {
+  providerDiagnostic?: KiroProviderDiagnostic;
+  abortSource?: "provider";
+};
 
 interface KiroToolSpecification {
   toolSpecification: {
@@ -91,6 +107,15 @@ interface KiroStreamState {
   totalContentLength: number;
   contextUsagePercentage: number;
   usage?: Usage;
+  /** True once the first tool-use event arrives. Afterwards text/thinking
+   * deltas are buffered and tool inputs are accumulated so the final event
+   * stream emits strictly sequential content blocks (the engine's tool-call
+   * recovery middleware rejects interleaved/out-of-order native tool calls). */
+  buffering: boolean;
+  bufferedContent: Array<
+    | { kind: "text" | "thinking"; delta: string }
+    | { kind: "tool"; toolUseId: string }
+  >;
 }
 
 interface KiroStreamingToolCall {
@@ -103,6 +128,7 @@ interface KiroStreamingToolCall {
 const ENV_VAR_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
 const API_MAX_OUTPUT_TOKENS = 200_000;
+const MAX_EVENT_FRAME_BYTES = 32 * 1024 * 1024;
 const KIRO_NAMESPACE = "34f7193f-561d-4050-bc84-9547d953d6bf";
 const KIRO_STREAMING_TARGET = "AmazonCodeWhispererStreamingService.GenerateAssistantResponse";
 const KIRO_CODEWHISPERER_SDK_USER_AGENT = "AWS-SDK-JS/3.0.0 kiro-ide/1.0.0";
@@ -123,11 +149,32 @@ export interface KiroAuthFailureMetadata {
   retryAfterMs?: number;
 }
 
-export class KiroAuthFailureError extends Error {
+class KiroProviderError extends Error {
+  readonly providerDiagnostic?: KiroProviderDiagnostic;
+  readonly retryAfterMs?: number;
+
+  constructor(
+    message: string,
+    providerDiagnostic?: KiroProviderDiagnostic,
+    retryAfterMs?: number,
+    options?: { cause?: unknown },
+  ) {
+    const retryMarker = retryAfterMs === undefined ? "" : ` (retry-after-ms: ${retryAfterMs})`;
+    super(
+      redactSensitiveString(`${message}${retryMarker}`),
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = "KiroProviderError";
+    this.providerDiagnostic = providerDiagnostic;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export class KiroAuthFailureError extends KiroProviderError {
   readonly kiroAuth: KiroAuthFailureMetadata;
 
   constructor(message: string, metadata: KiroAuthFailureMetadata, options?: { cause?: unknown }) {
-    super(redactSensitiveString(message), options?.cause === undefined ? undefined : { cause: options.cause });
+    super(message, providerDiagnosticForStatus(metadata.status), metadata.retryAfterMs, options);
     this.name = "KiroAuthFailureError";
     this.kiroAuth = { ...metadata };
   }
@@ -173,8 +220,79 @@ function parseToolInput(value: unknown): Record<string, unknown> {
   }
 }
 
+const TOP_LEVEL_SCHEMA_COMBINATORS = ["oneOf", "anyOf", "allOf"] as const;
+
+function schemaProperties(schema: JsonRecord): JsonRecord {
+  return isRecord(schema.properties) ? schema.properties : {};
+}
+
+function schemaRequired(schema: JsonRecord): string[] {
+  return Array.isArray(schema.required)
+    ? schema.required.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function mergePropertySchema(current: unknown, incoming: unknown): unknown {
+  if (current === undefined) return incoming;
+  if (JSON.stringify(current) === JSON.stringify(incoming)) return current;
+  const alternatives = isRecord(current) && Array.isArray(current.anyOf)
+    ? [...current.anyOf]
+    : [current];
+  if (!alternatives.some((entry) => JSON.stringify(entry) === JSON.stringify(incoming))) {
+    alternatives.push(incoming);
+  }
+  return { anyOf: alternatives };
+}
+
+function mergeObjectSchemas(schemas: readonly JsonRecord[], mode: "union" | "intersection"): JsonRecord {
+  const properties: JsonRecord = {};
+  const requiredSets = schemas.map((schema) => new Set(schemaRequired(schema)));
+  for (const schema of schemas) {
+    for (const [name, property] of Object.entries(schemaProperties(schema))) {
+      properties[name] = mergePropertySchema(properties[name], property);
+    }
+  }
+  const required = mode === "intersection"
+    ? [...new Set(requiredSets.flatMap((set) => [...set]))]
+    : requiredSets.length === 0
+      ? []
+      : [...requiredSets[0]].filter((name) => requiredSets.every((set) => set.has(name)));
+  return {
+    type: "object",
+    properties,
+    ...(required.length > 0 ? { required } : {}),
+    ...(schemas.every((schema) => schema.additionalProperties === false)
+      ? { additionalProperties: false }
+      : {}),
+  };
+}
+
+function normalizeTopLevelToolSchema(schema: unknown): unknown {
+  if (!isRecord(schema)) return { type: "object", properties: {} };
+  const base: JsonRecord = { ...schema };
+  const grouped: JsonRecord[] = [];
+  for (const combinator of TOP_LEVEL_SCHEMA_COMBINATORS) {
+    const variants = base[combinator];
+    delete base[combinator];
+    if (!Array.isArray(variants)) continue;
+    const objectVariants = variants.filter(isRecord);
+    if (objectVariants.length === 0) continue;
+    grouped.push(mergeObjectSchemas(
+      objectVariants,
+      combinator === "allOf" ? "intersection" : "union",
+    ));
+  }
+  if (grouped.length === 0) return schema;
+  const normalized = mergeObjectSchemas([base, ...grouped], "intersection");
+  return {
+    ...base,
+    ...normalized,
+    type: "object",
+  };
+}
+
 function toolSchemaForRequest(tool: Tool): unknown {
-  return tool.parameters ?? { type: "object", properties: {} };
+  return normalizeTopLevelToolSchema(tool.parameters);
 }
 
 function descriptionIncludesAll(description: string, terms: string[]): boolean {
@@ -222,16 +340,22 @@ function assistantText(message: Extract<Context["messages"][number], { role: "as
     .trim();
 }
 
+/** Normalize a cross-provider compound call ID to the primary ID accepted by Kiro. */
+function normalizeToolUseId(id: string): string {
+  const pipeIndex = id.indexOf("|");
+  return pipeIndex === -1 ? id : id.slice(0, pipeIndex);
+}
+
 function assistantToolUses(message: Extract<Context["messages"][number], { role: "assistant" }>): Array<{ toolUseId: string; name: string; input: Record<string, unknown> }> | undefined {
   const toolUses = message.content
     .filter((part): part is ToolCall => part.type === "toolCall")
-    .map((part) => ({ toolUseId: part.id, name: part.name, input: parseToolInput(part.arguments) }));
+    .map((part) => ({ toolUseId: normalizeToolUseId(part.id), name: part.name, input: parseToolInput(part.arguments) }));
   return toolUses.length > 0 ? toolUses : undefined;
 }
 
 function toolResultFromMessage(message: Extract<Context["messages"][number], { role: "toolResult" }>): KiroToolResult {
   return {
-    toolUseId: message.toolCallId,
+    toolUseId: normalizeToolUseId(message.toolCallId),
     status: message.isError ? "error" : "success",
     content: [{ text: textFromContent(message.content) }],
   };
@@ -303,7 +427,7 @@ function convertMessages(context: Context, modelId: string): { history: KiroConv
       }
       skippedKiroCliInstruction = false;
       flushRole();
-      const content = toolUses ? "" : assistantContent || "...";
+      const content = assistantContent || (toolUses ? "" : "...");
       history.push({
         assistantResponseMessage: {
           content,
@@ -415,16 +539,17 @@ function omitInternalKiroHeaders(headers: ProviderHeaders | undefined): Record<s
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 
-function buildRequest(model: Model<Api>, context: Context, config: ExtensionConfig, options?: SimpleStreamOptions): KiroRequest {
+function buildRequest(model: Model<Api>, context: Context, config: ExtensionConfig, options?: NativeSimpleStreamOptions): KiroRequest {
   const { history, currentMessage } = convertMessages(context, model.id);
   const firstContent = firstUserConversationContent(history, currentMessage);
   prependSystemInstructionHistory(history, buildSystemPrefix(context), model.id);
   const amazonQEndpoint = isAmazonQEndpoint(config);
   if (amazonQEndpoint) setUserMessageOrigin(history, currentMessage, "KIRO_CLI");
   const profileArn = getHeaderCaseInsensitive(options?.headers, KIRO_PROFILE_ARN_HEADER) ?? config.profileArn;
+  const conversationIdentity = options?.affinitySessionId?.trim() || firstContent || currentMessage.userInputMessage.content;
   const conversationState: KiroRequest["conversationState"] = {
     chatTriggerType: "MANUAL",
-    conversationId: uuidFromHash((firstContent || currentMessage.userInputMessage.content).slice(0, 4_000)) || randomUUID(),
+    conversationId: conversationIdentity ? uuidFromHash(conversationIdentity) : randomUUID(),
     currentMessage,
     history,
   };
@@ -495,15 +620,25 @@ export function buildHeaders(config: ExtensionConfig, apiKey: string, options?: 
     ...omitAuthorizationHeaders(omitInternalKiroHeaders(config.headers)),
     ...omitAuthorizationHeaders(omitInternalKiroHeaders(options?.headers)),
   };
+  // CodeWhisperer rejects Kiro API keys (ksk_ prefix) unless the token
+  // type is declared; OAuth bearer tokens are unaffected by this header.
+  if (apiKey.startsWith("ksk_")) headers.tokentype = "API_KEY";
   headers.Authorization = `Bearer ${apiKey}`;
   return headers;
 }
 
-function createRequestSignal(options: SimpleStreamOptions | undefined, timeoutMs: number): { signal: AbortSignal; dispose(): void } {
+function createRequestSignal(
+  options: SimpleStreamOptions | undefined,
+  timeoutMs: number,
+): { signal: AbortSignal; providerTimedOut(): boolean; dispose(): void } {
   const controller = new AbortController();
   let disposed = false;
+  let timedOut = false;
   const timeout = setTimeout(() => {
-    if (!disposed) controller.abort(new Error(`Kiro request timed out after ${timeoutMs}ms.`));
+    if (!disposed) {
+      timedOut = true;
+      controller.abort(new Error(`Kiro request timed out after ${timeoutMs}ms.`));
+    }
   }, timeoutMs);
   const abortFromParent = (): void => {
     if (!disposed) controller.abort(options?.signal?.reason ?? new Error("Kiro request aborted."));
@@ -512,6 +647,7 @@ function createRequestSignal(options: SimpleStreamOptions | undefined, timeoutMs
   options?.signal?.addEventListener("abort", abortFromParent, { once: true });
   return {
     signal: controller.signal,
+    providerTimedOut: () => timedOut,
     dispose() {
       disposed = true;
       clearTimeout(timeout);
@@ -520,12 +656,68 @@ function createRequestSignal(options: SimpleStreamOptions | undefined, timeoutMs
   };
 }
 
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new DOMException("Kiro request aborted.", "AbortError");
+}
+
+function awaitAbortable<T>(value: T | PromiseLike<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: (result: T) => void) => (result: T): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback(result);
+    };
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      reject(error);
+    };
+    const onAbort = (): void => fail(abortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(value).then(finish(resolve), fail);
+  });
+}
+
 function responseHeadersToRecord(headers: Headers): Record<string, string> {
   const output: Record<string, string> = {};
   headers.forEach((value, key) => {
     output[key] = value;
   });
   return output;
+}
+
+function providerDiagnosticForStatus(status: number): KiroProviderDiagnostic | undefined {
+  if (!Number.isInteger(status) || status < 400 || status > 599) return undefined;
+  const category = status === 401
+    ? "auth"
+    : status === 400
+      ? "invalid_request"
+      : status >= 500
+        ? "provider_unavailable"
+        : "unknown";
+  return { category, httpStatus: status, evidence: "structured_status" };
+}
+
+function retryAfterMsFromHeaders(status: number, headers: Headers): number | undefined {
+  if (status !== 429) return undefined;
+  const explicitMilliseconds = headers.get("retry-after-ms");
+  if (explicitMilliseconds && /^\d+(?:\.\d+)?$/.test(explicitMilliseconds)) {
+    return Math.ceil(Number(explicitMilliseconds));
+  }
+  const retryAfter = headers.get("retry-after");
+  if (!retryAfter) return undefined;
+  if (/^\d+$/.test(retryAfter)) return Number(retryAfter) * 1_000;
+  const retryAt = Date.parse(retryAfter);
+  if (!Number.isFinite(retryAt)) return undefined;
+  const responseDate = headers.get("date");
+  const referenceTime = responseDate && Number.isFinite(Date.parse(responseDate))
+    ? Date.parse(responseDate)
+    : Date.now();
+  return Math.max(0, retryAt - referenceTime);
 }
 
 function extractErrorMessage(payload: JsonRecord, status: number): string {
@@ -561,7 +753,13 @@ function authFailureMessage(status: number, reason: KiroAuthFailureMetadata["rea
   return `Kiro request failed with HTTP ${status} (${reason}); refreshable=${refreshable}; credentialMode=${credentialMode}.${unmanagedSuffix}`;
 }
 
-export function classifyKiroHttpFailure(status: number, payload: JsonRecord, credentialMode: KiroCredentialMode, providerId = "kiro"): Error {
+export function classifyKiroHttpFailure(
+  status: number,
+  payload: JsonRecord,
+  credentialMode: KiroCredentialMode,
+  providerId = "kiro",
+  retryAfterMs?: number,
+): Error {
   const reason = classifyAuthReason(status, payload);
   const potentiallyRefreshable = isPotentiallyRefreshable(reason);
   const metadata: KiroAuthFailureMetadata = {
@@ -570,11 +768,16 @@ export function classifyKiroHttpFailure(status: number, payload: JsonRecord, cre
     reason,
     refreshable: potentiallyRefreshable && credentialMode === "managed",
     credentialMode,
+    retryAfterMs,
   };
   if (status === 401 || status === 403) {
     return new KiroAuthFailureError(authFailureMessage(status, reason, credentialMode, metadata.refreshable), metadata);
   }
-  return new Error(extractErrorMessage(payload, status));
+  return new KiroProviderError(
+    extractErrorMessage(payload, status),
+    providerDiagnosticForStatus(status),
+    retryAfterMs,
+  );
 }
 
 function getKiroAuthFailure(error: unknown): KiroAuthFailureMetadata | undefined {
@@ -709,7 +912,7 @@ function parseStreamingToolInput(toolCall: ToolCall, existingInputBuffer: string
 }
 
 function ensureToolCall(stream: AssistantMessageEventStream, output: AssistantMessage, state: KiroStreamState, payload: JsonRecord): KiroStreamingToolCall {
-  const toolUseId = optionalString(payload.toolUseId) ?? `kiro-tool-${output.content.length}`;
+  const toolUseId = optionalString(payload.toolUseId) ?? `kiro-tool-${state.toolCallsById.size}`;
   const existing = state.toolCallsById.get(toolUseId);
   if (existing) {
     const name = optionalString(payload.name);
@@ -726,9 +929,11 @@ function ensureToolCall(stream: AssistantMessageEventStream, output: AssistantMe
   state.hasToolCalls = true;
   closeTextBlock(stream, output, state);
   closeThinkingBlock(stream, output, state);
-  const contentIndex = output.content.length;
-  output.content.push(toolCall);
-  stream.push({ type: "toolcall_start", contentIndex, partial: output });
+  const contentIndex = state.buffering ? -1 : output.content.length;
+  if (!state.buffering) {
+    output.content.push(toolCall);
+    stream.push({ type: "toolcall_start", contentIndex, partial: output });
+  }
   const entry: KiroStreamingToolCall = {
     contentIndex,
     toolCall,
@@ -740,10 +945,43 @@ function ensureToolCall(stream: AssistantMessageEventStream, output: AssistantMe
 }
 
 function emitToolCall(stream: AssistantMessageEventStream, output: AssistantMessage, state: KiroStreamState, payload: JsonRecord): void {
+  const toolUseId = optionalString(payload.toolUseId) ?? `kiro-tool-${state.toolCallsById.size}`;
+  const isNew = !state.toolCallsById.has(toolUseId);
   const entry = ensureToolCall(stream, output, state, payload);
+  if (state.buffering && isNew) state.bufferedContent.push({ kind: "tool", toolUseId });
   const { delta, inputBuffer } = parseStreamingToolInput(entry.toolCall, entry.inputBuffer, payload.input);
   entry.inputBuffer = inputBuffer;
-  if (delta) stream.push({ type: "toolcall_delta", contentIndex: entry.contentIndex, delta, partial: output });
+  if (delta && !state.buffering) stream.push({ type: "toolcall_delta", contentIndex: entry.contentIndex, delta, partial: output });
+}
+
+/** Emit buffered content in strict first-seen block order for Native recovery. */
+function flushBufferedContent(stream: AssistantMessageEventStream, output: AssistantMessage, state: KiroStreamState): void {
+  if (!state.buffering) {
+    closeToolCalls(stream, output, state);
+    return;
+  }
+  for (const buffered of state.bufferedContent) {
+    if (buffered.kind !== "tool") {
+      emitDelta(stream, output, state, buffered.kind, buffered.delta);
+      continue;
+    }
+    closeThinkingBlock(stream, output, state);
+    closeTextBlock(stream, output, state);
+    const entry = state.toolCallsById.get(buffered.toolUseId);
+    if (!entry || entry.ended) continue;
+    entry.toolCall.arguments = parseToolInput(entry.inputBuffer);
+    entry.contentIndex = output.content.length;
+    output.content.push(entry.toolCall);
+    stream.push({ type: "toolcall_start", contentIndex: entry.contentIndex, partial: output });
+    if (entry.inputBuffer) {
+      stream.push({ type: "toolcall_delta", contentIndex: entry.contentIndex, delta: entry.inputBuffer, partial: output });
+    }
+    entry.ended = true;
+    stream.push({ type: "toolcall_end", contentIndex: entry.contentIndex, toolCall: entry.toolCall, partial: output });
+  }
+  closeThinkingBlock(stream, output, state);
+  closeTextBlock(stream, output, state);
+  closeToolCalls(stream, output, state);
 }
 
 function closeToolCalls(stream: AssistantMessageEventStream, output: AssistantMessage, state: KiroStreamState): void {
@@ -792,15 +1030,34 @@ function captureResponseId(output: AssistantMessage, payload: JsonRecord): void 
   if (messageId) output.responseId = messageId;
 }
 
-function handleEvent(stream: AssistantMessageEventStream, output: AssistantMessage, state: KiroStreamState, model: Model<Api>, eventType: string, payload: JsonRecord | null): void {
+function handleEvent(stream: AssistantMessageEventStream, output: AssistantMessage, state: KiroStreamState, model: Model<Api>, eventType: string, payload: EventPayload | null): void {
   if (!payload) return;
+  if (Array.isArray(payload)) {
+    if (eventType === "toolUseEvent") {
+      state.buffering = true;
+      for (const entry of payload) if (isRecord(entry)) emitToolCall(stream, output, state, entry);
+    }
+    return;
+  }
   captureResponseId(output, payload);
   if (eventType === "assistantResponseEvent" || eventType === "codeEvent") {
-    emitDelta(stream, output, state, "text", getPayloadText(payload, ["content", "text"]));
+    const delta = getPayloadText(payload, ["content", "text"]);
+    if (!delta) return;
+    if (state.buffering) {
+      state.bufferedContent.push({ kind: "text", delta });
+      return;
+    }
+    emitDelta(stream, output, state, "text", delta);
     return;
   }
   if (eventType === "reasoningContentEvent") {
-    emitDelta(stream, output, state, "thinking", getReasoningPayloadText(payload));
+    const delta = getReasoningPayloadText(payload);
+    if (!delta) return;
+    if (state.buffering) {
+      state.bufferedContent.push({ kind: "thinking", delta });
+      return;
+    }
+    emitDelta(stream, output, state, "thinking", delta);
     return;
   }
   if (eventType === "meteringEvent") {
@@ -808,10 +1065,9 @@ function handleEvent(stream: AssistantMessageEventStream, output: AssistantMessa
     return;
   }
   if (eventType === "toolUseEvent") {
-    if (Array.isArray(payload)) {
-      for (const entry of payload) if (isRecord(entry)) emitToolCall(stream, output, state, entry);
-      return;
-    }
+    // Buffer from the first tool event so interleaved tool inputs never violate
+    // Native's one-active-block and increasing-content-index contract.
+    state.buffering = true;
     emitToolCall(stream, output, state, payload);
     return;
   }
@@ -834,17 +1090,23 @@ async function consumeKiroEventStream(response: Response, stream: AssistantMessa
     toolCallsById: new Map(),
     totalContentLength: 0,
     contextUsagePercentage: 0,
+    buffering: false,
+    bufferedContent: [],
   };
   const queue = new ByteQueue();
-  stream.push({ type: "start", partial: output });
-
-  for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
     queue.push(chunk);
     let iterations = 0;
     while (queue.length >= 16 && iterations < 1000) {
       iterations += 1;
       const totalLength = queue.peekUint32BE(0);
-      if (!totalLength || totalLength < 16 || totalLength > queue.length) break;
+      if (totalLength === null) break;
+      if (totalLength < 16 || totalLength > MAX_EVENT_FRAME_BYTES) {
+        logger.warn("eventstream_invalid_prefix", { totalLength, remainingBytes: queue.length });
+        queue.read(1);
+        continue;
+      }
+      if (totalLength > queue.length) break;
       const frameBytes = queue.read(totalLength);
       if (!frameBytes) break;
       const frame = parseEventFrame(frameBytes, logger);
@@ -854,9 +1116,9 @@ async function consumeKiroEventStream(response: Response, stream: AssistantMessa
     if (iterations >= 1000) logger.warn("eventstream_iteration_limit_reached", { remainingBytes: queue.length });
   }
 
+  flushBufferedContent(stream, output, state);
   closeThinkingBlock(stream, output, state);
   closeTextBlock(stream, output, state);
-  closeToolCalls(stream, output, state);
   output.usage = state.usage ?? estimatedUsage(model, state) ?? output.usage;
   output.stopReason = state.hasToolCalls ? "toolUse" : "stop";
   stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -870,26 +1132,40 @@ async function executeKiroRequest(
   context: Context,
   config: ExtensionConfig,
   logger: DebugLogger,
-  options?: SimpleStreamOptions,
+  options?: NativeSimpleStreamOptions,
 ): Promise<void> {
-  let signal: { signal: AbortSignal; dispose(): void } | undefined;
+  let signal: { signal: AbortSignal; providerTimedOut(): boolean; dispose(): void } | undefined;
   try {
     const credential = resolveKiroCredential(config, options);
     signal = createRequestSignal(options, options?.timeoutMs ?? config.requestTimeoutMs);
     const request = buildRequest(model, context, config, options);
-    const payload = options?.onPayload ? (await options.onPayload(request, model)) ?? request : request;
-    const response = await fetch(config.upstreamUrl, {
+    const payload = options?.onPayload
+      ? (await awaitAbortable(options.onPayload(request, model), signal.signal)) ?? request
+      : request;
+    const requestFetch = options?.fetch ?? globalThis.fetch;
+    const response = await requestFetch(config.upstreamUrl, {
       method: "POST",
       headers: buildHeaders(config, credential.apiKey, options),
       body: JSON.stringify(payload),
       signal: signal.signal,
     });
 
-    await options?.onResponse?.({ status: response.status, headers: responseHeadersToRecord(response.headers) }, model);
+    if (options?.onResponse) {
+      await awaitAbortable(
+        options.onResponse({ status: response.status, headers: responseHeadersToRecord(response.headers) }, model),
+        signal.signal,
+      );
+    }
 
     if (!response.ok) {
       const errorPayload = await readJsonResponse(response, "Kiro returned a non-object JSON response.");
-      throw classifyKiroHttpFailure(response.status, errorPayload, credential.mode, config.providerId);
+      throw classifyKiroHttpFailure(
+        response.status,
+        errorPayload,
+        credential.mode,
+        config.providerId,
+        retryAfterMsFromHeaders(response.status, response.headers),
+      );
     }
 
     await consumeKiroEventStream(response, stream, output, model, logger);
@@ -898,9 +1174,13 @@ async function executeKiroRequest(
     output.stopReason = aborted ? "aborted" : "error";
     const authFailure = getKiroAuthFailure(error);
     output.errorMessage = error instanceof Error ? redactSensitiveString(error.message) : "Unknown Kiro request error.";
+    if (error instanceof KiroProviderError && error.providerDiagnostic) {
+      (output as NativeAssistantMessage).providerDiagnostic = error.providerDiagnostic;
+    }
+    if (signal?.providerTimedOut()) (output as NativeAssistantMessage).abortSource = "provider";
     if (authFailure) {
       (output as AssistantMessage & { authFailure?: KiroAuthFailureMetadata; errorMetadata?: Record<string, unknown> }).authFailure = { ...authFailure };
-      (output as AssistantMessage & { authFailure?: KiroAuthFailureMetadata; errorMetadata?: Record<string, unknown> }).errorMetadata = { providerId: "kiro", authFailure: { ...authFailure } };
+      (output as AssistantMessage & { authFailure?: KiroAuthFailureMetadata; errorMetadata?: Record<string, unknown> }).errorMetadata = { providerId: config.providerId, authFailure: { ...authFailure } };
     }
     logger.error("request_failed", { model: model.id, stopReason: output.stopReason, error });
     stream.push({ type: "error", reason: output.stopReason, error: output });
@@ -914,7 +1194,8 @@ export function createKiroStream(config: ExtensionConfig, _runtime: KiroRuntimeS
   return (model: Model<Api>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream => {
     const stream = createAssistantMessageEventStream();
     const output = createOutput(model);
-    void executeKiroRequest(stream, output, model, context, config, logger, options);
+    stream.push({ type: "start", partial: output });
+    void executeKiroRequest(stream, output, model, context, config, logger, options as NativeSimpleStreamOptions | undefined);
     return stream;
   };
 }

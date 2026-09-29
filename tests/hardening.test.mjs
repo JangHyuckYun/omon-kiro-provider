@@ -131,6 +131,18 @@ test("static, model, and request Authorization headers cannot override managed c
   assert.equal(headers["x-request"], "ok");
 });
 
+test("Kiro API keys send tokentype API_KEY but OAuth bearer tokens do not", () => {
+  const { config } = loadConfig(writeConfig({}));
+
+  const apiKeyHeaders = buildHeaders(config, "ksk_0123456789abcdef");
+  assert.equal(apiKeyHeaders.tokentype, "API_KEY");
+  assert.equal(apiKeyHeaders.Authorization, "Bearer ksk_0123456789abcdef");
+
+  const oauthHeaders = buildHeaders(config, "eyJhbGciOiJIUzI1NiJ9.example-access-token");
+  assert.equal(oauthHeaders.tokentype, undefined);
+  assert.equal(oauthHeaders.Authorization, "Bearer eyJhbGciOiJIUzI1NiJ9.example-access-token");
+});
+
 test("Kiro HTTP auth failures expose refreshable metadata without treating quota 403 as refreshable", () => {
   const unauthorized = classifyKiroHttpFailure(401, { message: "expired bearer token" }, "managed");
   assert.equal(unauthorized.name, "KiroAuthFailureError");
@@ -184,6 +196,7 @@ test("default model metadata matches Kiro ListAvailableModels discovery", () => 
     medium: "medium",
     high: "high",
     xhigh: "xhigh",
+    max: null,
   });
   assert.deepEqual(byId.get("claude-opus-4.7")?.promptCaching, {
     supportsPromptCaching: true,

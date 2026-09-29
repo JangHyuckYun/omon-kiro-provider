@@ -2,10 +2,11 @@ import type { DebugLogger } from "./debug-logger.js";
 import { isRecord, type JsonRecord } from "./shared/index.js";
 
 export type { JsonRecord };
+export type EventPayload = JsonRecord | unknown[];
 
 export interface EventFrame {
   headers: Record<string, string>;
-  payload: JsonRecord | null;
+  payload: EventPayload | null;
 }
 
 const CRC32_TABLE = new Uint32Array(256);
@@ -156,7 +157,7 @@ export function parseEventFrame(data: Uint8Array, logger: DebugLogger): EventFra
 
     try {
       const parsed = JSON.parse(payloadText) as unknown;
-      return { headers, payload: isRecord(parsed) ? parsed : { value: parsed } };
+      return { headers, payload: Array.isArray(parsed) ? parsed : isRecord(parsed) ? parsed : { value: parsed } };
     } catch (error) {
       logger.warn("eventstream_payload_parse_failed", { message: error instanceof Error ? error.message : "unknown error" });
       return { headers, payload: { raw: payloadText } };
