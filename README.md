@@ -15,7 +15,7 @@ Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적�
 - 원본 프로젝트: [`MasuRii/pi-kiro-provider`](https://github.com/MasuRii/pi-kiro-provider)
 - 이 포크: [`JangHyuckYun/pi-kiro-provider`](https://github.com/JangHyuckYun/pi-kiro-provider)
 - 원본 기준 버전: `0.2.2`
-- 포크 버전: `0.3.0-native.1`
+- 포크 버전: `0.3.0-native.2`
 - 검증 대상: OMO Native `5.1.0`, senpi `2026.9.28-7`
 - npm의 `pi-kiro-provider` 이름은 여전히 원본 프로젝트를 가리킵니다. 이 포크는 GitHub 주소로 설치해야 합니다.
 
@@ -48,7 +48,7 @@ Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적�
 ```json
 {
   "packages": [
-    "git:github.com/JangHyuckYun/pi-kiro-provider@v0.3.0-native.1"
+    "git:github.com/JangHyuckYun/pi-kiro-provider@v0.3.0-native.2"
   ]
 }
 ```
@@ -91,7 +91,7 @@ npm run check:native
 |---|---:|
 | `omo-ai` | `5.1.0` |
 | `@code-yeongyu/senpi` | `2026.9.28-7` |
-| Host | macOS/Linux 검증, Windows 미검증 |
+| Host | macOS 실사용 검증. Linux는 동일 경로 규칙을 지원하지만 실행 검증 전, Windows 미검증 |
 
 알 수 없는 engine fingerprint, 다른 OMO/senpi 버전, 중복 engine 후보, 부분 패치 상태에서는 engine 파일을 수정하지 않고 오류를 반환합니다.
 

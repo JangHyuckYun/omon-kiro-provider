@@ -9,7 +9,7 @@
 | Upstream | `MasuRii/pi-kiro-provider` |
 | Fork | `JangHyuckYun/pi-kiro-provider` |
 | Upstream 기준 | `0.2.2`, commit `35fc171e3bea` |
-| Fork release line | `0.3.0-native.1` |
+| Fork release line | `0.3.0-native.2` |
 | 라이선스 | MIT |
 
 이 fork의 기존 `main`은 작업 시작 시점에 upstream `main`과 ahead/behind `0/0`으로 동일했습니다. 기존에 다음 두 수정 브랜치가 있었습니다.
@@ -173,7 +173,7 @@ Engine patch가 새로 적용되거나 복원되면 OMO 프로세스를 재시�
 ```json
 {
   "packages": [
-    "git:github.com/JangHyuckYun/pi-kiro-provider@v0.3.0-native.1"
+    "git:github.com/JangHyuckYun/pi-kiro-provider@v0.3.0-native.2"
   ]
 }
 ```

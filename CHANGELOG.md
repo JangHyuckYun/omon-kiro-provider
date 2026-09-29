@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0-native.2 - 2026-09-29
+
+### Changed
+
+- Corrected the README host support table: only macOS has end-to-end
+  verification; Linux is supported by path rules but not yet run-verified.
+- Install references now point to `v0.3.0-native.2`. Provider code is
+  unchanged from `0.3.0-native.1`.
+
 ## 0.3.0-native.1 - 2026-09-29
 
 OMO Native 5.1 hardened fork release.

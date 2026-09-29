@@ -1,6 +1,6 @@
 {
   "name": "pi-kiro-provider",
-  "version": "0.3.0-native.1",
+  "version": "0.3.0-native.2",
   "private": false,
   "description": "OMO Native-hardened Pi extension provider for Kiro's AWS CodeWhisperer streaming API.",
   "type": "module",
