@@ -435,7 +435,7 @@ export function runCli() {
   const enginePath = findEnginePath(argumentValue("--engine-path"));
   if (!enginePath) {
     if (optional) {
-      info("[pi-kiro-provider] OMO Native engine not found; skipped optional integration patch.");
+      info("[omon-kiro-provider] OMO Native engine not found; skipped optional integration patch.");
       return;
     }
     throw new Error("OMO Native engine not found. Install omo-ai or set PI_KIRO_SENPI_AGENT_SESSION.");
@@ -445,9 +445,9 @@ export function runCli() {
     : mode === "restore"
       ? restoreEngine(enginePath)
       : applyEnginePatch(enginePath);
-  info(`[pi-kiro-provider] ${result.status}: ${result.enginePath}`);
+  info(`[omon-kiro-provider] ${result.status}: ${result.enginePath}`);
   if (result.status === "patched" || result.status === "restored") {
-    info("[pi-kiro-provider] Restart every running OMO process before using Kiro.");
+    info("[omon-kiro-provider] Restart every running OMO process before using Kiro.");
   }
 }
 
@@ -456,7 +456,7 @@ if (import.meta.url === invokedPath) {
   try {
     runCli();
   } catch (error) {
-    process.stderr.write(`[pi-kiro-provider] ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`[omon-kiro-provider] ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   }
 }

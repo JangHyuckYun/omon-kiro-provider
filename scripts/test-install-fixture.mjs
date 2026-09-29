@@ -21,7 +21,7 @@ import {
 } from "./patch-omo-native.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-kiro-provider-install-"));
+const fixtureRoot = mkdtempSync(join(tmpdir(), "omon-kiro-provider-install-"));
 const fixtureHome = join(fixtureRoot, "home");
 const bunRoot = join(fixtureHome, ".bun");
 const omoRoot = join(bunRoot, "install", "global", "node_modules", "omo-ai");
@@ -29,7 +29,7 @@ const senpiRoot = join(omoRoot, "node_modules", "@code-yeongyu", "senpi");
 const enginePath = join(senpiRoot, "dist", "core", "agent-session.js");
 const fakeBin = join(bunRoot, "bin");
 const installRoot = join(fixtureRoot, "install");
-const installedPackage = join(installRoot, "node_modules", "pi-kiro-provider");
+const installedPackage = join(installRoot, "node_modules", "omon-kiro-provider");
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -73,7 +73,7 @@ try {
   if (process.platform !== "win32") chmodSync(fakeOmo, 0o755);
 
   writeFileSync(join(installRoot, "package.json"), JSON.stringify({
-    name: "pi-kiro-provider-install-fixture",
+    name: "omon-kiro-provider-install-fixture",
     version: "1.0.0",
     private: true,
   }, null, 2), "utf8");

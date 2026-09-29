@@ -14,10 +14,10 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-kiro-provider-omo-"));
+const fixtureRoot = mkdtempSync(join(tmpdir(), "omon-kiro-provider-omo-"));
 const agentRoot = join(fixtureRoot, "agent");
 const npmRoot = join(agentRoot, "npm");
-const installedPackage = join(npmRoot, "node_modules", "pi-kiro-provider");
+const installedPackage = join(npmRoot, "node_modules", "omon-kiro-provider");
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -38,7 +38,7 @@ function run(command, args, options = {}) {
 try {
   mkdirSync(npmRoot, { recursive: true });
   writeFileSync(join(npmRoot, "package.json"), JSON.stringify({
-    name: "pi-kiro-provider-omo-smoke",
+    name: "omon-kiro-provider-omo-smoke",
     version: "1.0.0",
     private: true,
   }, null, 2), "utf8");

@@ -1,4 +1,4 @@
-# OMO Native용 pi-kiro-provider 하드닝 현황
+# OMO Native용 omon-kiro-provider 하드닝 현황
 
 기준일: 2026-09-29
 
@@ -7,9 +7,9 @@
 | 항목 | 상태 |
 |---|---|
 | Upstream | `MasuRii/pi-kiro-provider` |
-| Fork | `JangHyuckYun/pi-kiro-provider` |
+| Fork | `JangHyuckYun/omon-kiro-provider` (2026-09-29 `pi-kiro-provider`에서 이름 변경) |
 | Upstream 기준 | `0.2.2`, commit `35fc171e3bea` |
-| Fork release line | `0.3.0-native.2` |
+| Fork release line | `0.3.0-native.3` |
 | 라이선스 | MIT |
 
 이 fork의 기존 `main`은 작업 시작 시점에 upstream `main`과 ahead/behind `0/0`으로 동일했습니다. 기존에 다음 두 수정 브랜치가 있었습니다.
@@ -149,6 +149,8 @@ Native `shouldCompact`의 reserve subtraction과 strict comparison을 역보정�
 
 ### 안전 장치
 
+엔진 옆에 만들어지는 파일 이름은 이름 변경 후에도 `agent-session.js.pi-kiro-provider.backup`, `.receipt.json`, `.lock`을 유지합니다. 이미 패치된 기존 설치의 원본 백업과 롤백 경로를 깨지 않기 위해서입니다.
+
 `scripts/patch-omo-native.mjs`:
 
 - OMO `5.1.0` + senpi `2026.9.28-7`만 지원
@@ -173,7 +175,7 @@ Engine patch가 새로 적용되거나 복원되면 OMO 프로세스를 재시�
 ```json
 {
   "packages": [
-    "git:github.com/JangHyuckYun/pi-kiro-provider@v0.3.0-native.2"
+    "git:github.com/JangHyuckYun/omon-kiro-provider@v0.3.0-native.3"
   ]
 }
 ```
@@ -185,8 +187,8 @@ Engine patch가 새로 적용되거나 복원되면 OMO 프로세스를 재시�
 
 ```bash
 cd ~/.omo/agent/npm
-npm install --save github:JangHyuckYun/pi-kiro-provider
-cd node_modules/pi-kiro-provider
+npm install --save github:JangHyuckYun/omon-kiro-provider
+cd node_modules/omon-kiro-provider
 npm run check:native
 ```
 
@@ -249,7 +251,7 @@ Rate-limit 기본값:
 검증된 전체 Git SHA로 package reference를 갱신합니다.
 
 ```json
-"git:github.com/JangHyuckYun/pi-kiro-provider@<NEW_FULL_COMMIT_SHA>"
+"git:github.com/JangHyuckYun/omon-kiro-provider@<NEW_FULL_COMMIT_SHA>"
 ```
 
 재설치 후:
@@ -263,7 +265,7 @@ npm run check:native
 OMO update는 provider postinstall을 재실행하지 않을 수 있습니다.
 
 ```bash
-cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+cd ~/.omo/agent/git/github.com/JangHyuckYun/omon-kiro-provider
 npm run setup:native
 npm run check:native
 ```
@@ -275,7 +277,7 @@ npm run check:native
 ### Engine
 
 ```bash
-cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+cd ~/.omo/agent/git/github.com/JangHyuckYun/omon-kiro-provider
 npm run restore:native
 ```
 

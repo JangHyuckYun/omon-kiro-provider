@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const buildDir = mkdtempSync(join(tmpdir(), "pi-kiro-provider-test-"));
+const buildDir = mkdtempSync(join(tmpdir(), "omon-kiro-provider-test-"));
 const tscPath = join(root, "node_modules", "typescript", "bin", "tsc");
 
 let exitCode = 0;

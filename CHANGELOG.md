@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0-native.3 - 2026-09-29
+
+### Changed
+
+- Renamed this fork to `omon-kiro-provider` (package name, GitHub repository,
+  install references, log prefixes). GitHub redirects the old
+  `JangHyuckYun/pi-kiro-provider` URL.
+- Engine patch artifact names (`*.pi-kiro-provider.backup`, `.receipt.json`,
+  `.lock`) are unchanged so existing patched installs keep their rollback path.
+- Provider ID stays `kiro`; model references such as `kiro/claude-opus-5.5`
+  are unchanged.
+
 ## 0.3.0-native.2 - 2026-09-29
 
 ### Changed

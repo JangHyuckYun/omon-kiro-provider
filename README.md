@@ -1,21 +1,21 @@
 <div align="center">
 
-# pi-kiro-provider - OMO Native hardened fork
+# omon-kiro-provider - OMO Native hardened Kiro provider
 
-[![License](https://img.shields.io/github/license/JangHyuckYun/pi-kiro-provider?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/github/license/JangHyuckYun/omon-kiro-provider?style=for-the-badge)](LICENSE)
 [![Upstream](https://img.shields.io/badge/upstream-MasuRii%2Fpi--kiro--provider-blue?style=for-the-badge)](https://github.com/MasuRii/pi-kiro-provider)
 [![OMO Native](https://img.shields.io/badge/OMO%20Native-5.1.0-green?style=for-the-badge)](https://github.com/code-yeongyu/oh-my-openagent)
 
-Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적으로 사용하기 위한 `pi-kiro-provider` 포크입니다.
+Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적으로 사용하기 위한 `pi-kiro-provider` 포크입니다. 이 fork의 이름은 `omon-kiro-provider`입니다.
 
 </div>
 
 ## 상태와 출처
 
 - 원본 프로젝트: [`MasuRii/pi-kiro-provider`](https://github.com/MasuRii/pi-kiro-provider)
-- 이 포크: [`JangHyuckYun/pi-kiro-provider`](https://github.com/JangHyuckYun/pi-kiro-provider)
+- 이 포크: [`JangHyuckYun/omon-kiro-provider`](https://github.com/JangHyuckYun/omon-kiro-provider)
 - 원본 기준 버전: `0.2.2`
-- 포크 버전: `0.3.0-native.2`
+- 포크 버전: `0.3.0-native.3`
 - 검증 대상: OMO Native `5.1.0`, senpi `2026.9.28-7`
 - npm의 `pi-kiro-provider` 이름은 여전히 원본 프로젝트를 가리킵니다. 이 포크는 GitHub 주소로 설치해야 합니다.
 
@@ -48,7 +48,7 @@ Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적�
 ```json
 {
   "packages": [
-    "git:github.com/JangHyuckYun/pi-kiro-provider@v0.3.0-native.2"
+    "git:github.com/JangHyuckYun/omon-kiro-provider@v0.3.0-native.3"
   ]
 }
 ```
@@ -56,7 +56,7 @@ Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적�
 검증된 tag 또는 전체 commit SHA를 사용하십시오.
 
 ```json
-"git:github.com/JangHyuckYun/pi-kiro-provider@<FULL_COMMIT_SHA>"
+"git:github.com/JangHyuckYun/omon-kiro-provider@<FULL_COMMIT_SHA>"
 ```
 
 그 다음 OMO를 새로 시작합니다. 설치 lifecycle이 허용된 환경에서는 provider 설치 후 OMO Native engine compatibility patch가 자동 적용됩니다. 패치가 새로 적용되었다면 실행 중인 모든 OMO 프로세스를 종료하고 다시 시작해야 합니다.
@@ -66,13 +66,13 @@ Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적�
 ```bash
 mkdir -p ~/.omo/agent/npm
 cd ~/.omo/agent/npm
-npm install --save github:JangHyuckYun/pi-kiro-provider
+npm install --save github:JangHyuckYun/omon-kiro-provider
 ```
 
 설치 후 명시적으로 검사할 수 있습니다.
 
 ```bash
-cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+cd ~/.omo/agent/npm/node_modules/omon-kiro-provider
 npm run check:native
 ```
 
@@ -142,7 +142,7 @@ npm run package:dry-run
 설치된 OMO Native 검증:
 
 ```bash
-cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+cd ~/.omo/agent/git/github.com/JangHyuckYun/omon-kiro-provider
 npm run check:native
 
 OMO_CODING_AGENT_DIR="$HOME/.omo/agent" \
@@ -162,7 +162,7 @@ omo --list-models kiro
 OMO 자체 업데이트는 provider package를 재설치하지 않을 수 있습니다. 업데이트 후:
 
 ```bash
-cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+cd ~/.omo/agent/git/github.com/JangHyuckYun/omon-kiro-provider
 npm run setup:native
 npm run check:native
 ```
@@ -174,7 +174,7 @@ npm run check:native
 Engine patch를 적용할 때 원본과 receipt가 engine 파일 옆에 생성됩니다. 현재 engine이 receipt의 patched hash와 일치할 때만 복원됩니다.
 
 ```bash
-cd ~/.omo/agent/npm/node_modules/pi-kiro-provider
+cd ~/.omo/agent/git/github.com/JangHyuckYun/omon-kiro-provider
 npm run restore:native
 ```
 

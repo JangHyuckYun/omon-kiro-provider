@@ -92,7 +92,7 @@ export class DebugLogger {
 
   private write(level: "debug" | "warn" | "error", event: string, details?: unknown): void {
     if (!this.options.debug) return;
-    const line = `${JSON.stringify({ timestamp: new Date().toISOString(), level, extension: "pi-kiro-provider", event })}${stringifyDetails(details)}\n`;
+    const line = `${JSON.stringify({ timestamp: new Date().toISOString(), level, extension: "omon-kiro-provider", event })}${stringifyDetails(details)}\n`;
     this.writeQueue = this.writeQueue.then(
       () => this.appendLine(line),
       () => this.appendLine(line),

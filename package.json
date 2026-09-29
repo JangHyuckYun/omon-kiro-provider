@@ -1,6 +1,6 @@
 {
-  "name": "pi-kiro-provider",
-  "version": "0.3.0-native.2",
+  "name": "omon-kiro-provider",
+  "version": "0.3.0-native.3",
   "private": false,
   "description": "OMO Native-hardened Pi extension provider for Kiro's AWS CodeWhisperer streaming API.",
   "type": "module",
@@ -58,13 +58,13 @@
     "JangHyuck Yun"
   ],
   "license": "MIT",
-  "homepage": "https://github.com/JangHyuckYun/pi-kiro-provider#readme",
+  "homepage": "https://github.com/JangHyuckYun/omon-kiro-provider#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JangHyuckYun/pi-kiro-provider.git"
+    "url": "git+https://github.com/JangHyuckYun/omon-kiro-provider.git"
   },
   "bugs": {
-    "url": "https://github.com/JangHyuckYun/pi-kiro-provider/issues"
+    "url": "https://github.com/JangHyuckYun/omon-kiro-provider/issues"
   },
   "engines": {
     "node": ">=20"
