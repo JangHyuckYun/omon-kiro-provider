@@ -21,6 +21,8 @@ OMO Native 5.1 hardened fork release.
 - Cross-provider pipe-compound tool IDs.
 - Stalled payload/response hooks and provider abort provenance.
 - Native provider diagnostics, custom provider IDs, and Retry-After markers.
+- Transient Kiro 429 recovery before Native cools the only credential slot,
+  with bounded abortable exponential retry and configurable limits.
 - Kiro API-key `tokentype` header handling.
 - Optional OAuth registration for current Native package APIs.
 

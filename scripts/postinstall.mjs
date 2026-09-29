@@ -18,7 +18,7 @@ function runNode(script, args = []) {
 }
 
 if (process.env.PI_KIRO_SKIP_OMO_NATIVE_PATCH !== "1") {
-  runNode(join(root, "scripts", "patch-omo-native.mjs"), ["--apply-if-present", "--silent"]);
+  runNode(join(root, "scripts", "patch-omo-native.mjs"), ["--silent"]);
 }
 
 // Preserve the upstream Pi-extension vulnerable-dependency hook when installed

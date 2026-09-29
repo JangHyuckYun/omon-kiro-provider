@@ -33,8 +33,9 @@ Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적�
 - top-level `oneOf` / `anyOf` / `allOf` tool schema를 Kiro 허용 object schema로 정규화
 - JSON-array tool payload와 깨진 event-stream prefix 복구
 - 병렬/interleaved tool event를 Native content-block 순서로 직렬화
-- mixed assistant text + tool history, full conversation affinity, cross-provider pipe tool ID 보존
+- mixed assistant text + tool history, full conversation affinity, cross-provider pipe tool ID 정규화
 - timeout/abort listener 정리, injected fetch, Native provider diagnostics, `Retry-After` marker
+- 단일 credential의 일시적 HTTP 429를 Native cooldown 이전에 bounded retry
 - Kiro API key의 `tokentype: API_KEY` 헤더
 - OMO Native engine의 80% compaction 정책을 설치·검사·복원하는 fail-closed 도구
 
@@ -47,12 +48,12 @@ Kiro의 AWS CodeWhisperer 호환 스트리밍 API를 OMO Native에서 안정적�
 ```json
 {
   "packages": [
-    "git:github.com/JangHyuckYun/pi-kiro-provider@main"
+    "git:github.com/JangHyuckYun/pi-kiro-provider@v0.3.0-native.1"
   ]
 }
 ```
 
-재현 가능한 환경에서는 `main` 대신 검증된 전체 commit SHA를 권장합니다.
+검증된 tag 또는 전체 commit SHA를 사용하십시오.
 
 ```json
 "git:github.com/JangHyuckYun/pi-kiro-provider@<FULL_COMMIT_SHA>"
@@ -117,6 +118,9 @@ cp config/config.example.json config.json
 ```json
 {
   "debug": false,
+  "rateLimitMaxRetries": 3,
+  "rateLimitRetryBaseMs": 30000,
+  "rateLimitRetryMaxMs": 120000,
   "modelDefaults": {
     "compactionTriggerRatio": 0.8
   }
@@ -148,6 +152,11 @@ omo --list-models kiro
 
 목록에는 `claude-opus-5.5`가 정확히 한 번 표시되어야 합니다.
 
+장시간 orchestrator 검증에는 Kiro를 main model로 선택한 fresh session에서
+서로 다른 Native tool, 병렬 `task` batch, dependency-ordered mass-ulw DAG를
+모두 실행합니다. 단순 model-list 또는 한 번의 text 응답은 release evidence가
+아닙니다.
+
 ## OMO 업데이트
 
 OMO 자체 업데이트는 provider package를 재설치하지 않을 수 있습니다. 업데이트 후:
@@ -176,6 +185,8 @@ Provider 자체는 `settings.json`에서 이전 Git SHA 또는 원본 npm packag
 - 이 포크는 npm에 별도 배포되지 않았습니다. `npm install pi-kiro-provider`는 원본을 설치합니다.
 - 80% 도달 시 compaction은 시작되지만 Kiro summary 요청 자체가 HTTP 403을 반환할 수 있습니다. 엔진은 이 경우 fail-closed로 context를 버리지 않습니다.
 - 한 개의 매우 큰 retained turn은 compaction 후에도 80% 이상을 유지할 수 있습니다.
+- 429 retry는 bounded입니다. 기본 3회(30s, 60s, 120s) 후에도 Kiro가 계속
+  거부하면 최종 429를 Native에 전달합니다.
 - OMO/senpi 버전이 바뀌면 compatibility profile을 검토하고 갱신해야 합니다.
 
 ## Upstream Pi 설치

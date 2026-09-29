@@ -7,6 +7,9 @@
   "endpoint": "codewhisperer",
   "apiKey": "$KIRO_ACCESS_TOKEN",
   "requestTimeoutMs": 600000,
+  "rateLimitMaxRetries": 3,
+  "rateLimitRetryBaseMs": 30000,
+  "rateLimitRetryMaxMs": 120000,
   "profileArn": "",
   "headers": {},
   "modelDefaults": {

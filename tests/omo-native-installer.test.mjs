@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 
 import {
@@ -113,4 +114,27 @@ test("engine transformation rejects unknown or partially patched input", () => {
     () => patchEngineSource(partial, { pristineSha256: sha256(partial) }),
     /content estimate threshold/,
   );
+});
+
+test("normal postinstall fails closed without OMO and supports explicit opt-out", () => {
+  const emptyPath = mkdtempSync(join(tmpdir(), "pi-kiro-provider-empty-path-"));
+  const postinstall = fileURLToPath(new URL("../scripts/postinstall.mjs", import.meta.url));
+  try {
+    const required = spawnSync(process.execPath, [postinstall], {
+      cwd: dirname(postinstall),
+      env: { ...process.env, PATH: emptyPath, PI_KIRO_SKIP_OMO_NATIVE_PATCH: "" },
+      encoding: "utf8",
+    });
+    assert.equal(required.status, 1);
+    assert.match(required.stderr, /OMO Native engine not found/);
+
+    const skipped = spawnSync(process.execPath, [postinstall], {
+      cwd: dirname(postinstall),
+      env: { ...process.env, PATH: emptyPath, PI_KIRO_SKIP_OMO_NATIVE_PATCH: "1" },
+      encoding: "utf8",
+    });
+    assert.equal(skipped.status, 0);
+  } finally {
+    rmSync(emptyPath, { recursive: true, force: true });
+  }
 });

@@ -29,7 +29,7 @@ interface KiroRuntimeState {
 }
 
 type KiroProviderDiagnostic = {
-  category: "auth" | "invalid_request" | "provider_unavailable" | "unknown";
+  category: "auth" | "invalid_request" | "provider_unavailable" | "rate_limit" | "unknown";
   httpStatus: number;
   evidence: "structured_status";
 };
@@ -37,6 +37,7 @@ type KiroProviderDiagnostic = {
 type NativeSimpleStreamOptions = SimpleStreamOptions & {
   affinitySessionId?: string;
   fetch?: typeof globalThis.fetch;
+  delay?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
 };
 
 type NativeAssistantMessage = AssistantMessage & {
@@ -694,12 +695,42 @@ function providerDiagnosticForStatus(status: number): KiroProviderDiagnostic | u
   if (!Number.isInteger(status) || status < 400 || status > 599) return undefined;
   const category = status === 401
     ? "auth"
+    : status === 429
+      ? "rate_limit"
     : status === 400
       ? "invalid_request"
       : status >= 500
         ? "provider_unavailable"
         : "unknown";
   return { category, httpStatus: status, evidence: "structured_status" };
+}
+
+function rateLimitRetryDelayMs(config: ExtensionConfig, retryIndex: number, serverHintMs?: number): number {
+  const exponentialDelay = Math.min(
+    config.rateLimitRetryMaxMs,
+    config.rateLimitRetryBaseMs * 2 ** retryIndex,
+  );
+  return Math.min(
+    config.rateLimitRetryMaxMs,
+    Math.max(exponentialDelay, serverHintMs ?? 0),
+  );
+}
+
+function delayWithSignal(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(finish, milliseconds);
+    const onAbort = (): void => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      reject(abortReason(signal));
+    };
+    function finish(): void {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function retryAfterMsFromHeaders(status: number, headers: Headers): number | undefined {
@@ -1143,28 +1174,45 @@ async function executeKiroRequest(
       ? (await awaitAbortable(options.onPayload(request, model), signal.signal)) ?? request
       : request;
     const requestFetch = options?.fetch ?? globalThis.fetch;
-    const response = await requestFetch(config.upstreamUrl, {
-      method: "POST",
-      headers: buildHeaders(config, credential.apiKey, options),
-      body: JSON.stringify(payload),
-      signal: signal.signal,
-    });
+    const retryDelay = options?.delay ?? delayWithSignal;
+    let response: Response;
+    for (let retryIndex = 0; ; retryIndex += 1) {
+      response = await requestFetch(config.upstreamUrl, {
+        method: "POST",
+        headers: buildHeaders(config, credential.apiKey, options),
+        body: JSON.stringify(payload),
+        signal: signal.signal,
+      });
 
-    if (options?.onResponse) {
-      await awaitAbortable(
-        options.onResponse({ status: response.status, headers: responseHeadersToRecord(response.headers) }, model),
-        signal.signal,
-      );
-    }
+      if (options?.onResponse) {
+        await awaitAbortable(
+          options.onResponse({ status: response.status, headers: responseHeadersToRecord(response.headers) }, model),
+          signal.signal,
+        );
+      }
 
-    if (!response.ok) {
+      if (response.ok) break;
+
       const errorPayload = await readJsonResponse(response, "Kiro returned a non-object JSON response.");
+      const retryAfterMs = retryAfterMsFromHeaders(response.status, response.headers);
+      if (response.status === 429 && retryIndex < config.rateLimitMaxRetries) {
+        const delayMs = rateLimitRetryDelayMs(config, retryIndex, retryAfterMs);
+        logger.warn("rate_limit_retry_scheduled", {
+          model: model.id,
+          attempt: retryIndex + 1,
+          maxRetries: config.rateLimitMaxRetries,
+          delayMs,
+        });
+        await retryDelay(delayMs, signal.signal);
+        continue;
+      }
+
       throw classifyKiroHttpFailure(
         response.status,
         errorPayload,
         credential.mode,
         config.providerId,
-        retryAfterMsFromHeaders(response.status, response.headers),
+        retryAfterMs,
       );
     }
 

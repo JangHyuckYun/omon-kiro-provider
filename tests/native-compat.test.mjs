@@ -176,7 +176,7 @@ test("Native preserves semantic order for interleaved tools", async () => {
   assert.equal(result.usage.output, 2);
 });
 
-test("Native preserves mixed history, affinity, and normalized tool ids", async () => {
+test("Native preserves mixed history and affinity", async () => {
   const historyContext = {
     systemPrompt: "",
     messages: [
@@ -185,7 +185,7 @@ test("Native preserves mixed history, affinity, and normalized tool ids", async 
         role: "assistant",
         content: [
           { type: "text", text: "preface" },
-          { type: "toolCall", id: "call_abc|fc_internal", name: "read", arguments: { path: "a" } },
+          { type: "toolCall", id: "call_abc", name: "read", arguments: { path: "a" } },
         ],
         api: "kiro",
         provider: "kiro",
@@ -203,7 +203,7 @@ test("Native preserves mixed history, affinity, and normalized tool ids", async 
       },
       {
         role: "toolResult",
-        toolCallId: "call_abc|fc_internal",
+        toolCallId: "call_abc",
         toolName: "read",
         content: [{ type: "text", text: "done" }],
         isError: false,
@@ -228,15 +228,67 @@ test("Native preserves mixed history, affinity, and normalized tool ids", async 
     .find((item) => item.assistantResponseMessage?.toolUses)?.assistantResponseMessage;
   const resultMessage = requests[0].conversationState.currentMessage;
   assert.equal(assistant.content, "preface");
-  assert.equal(assistant.toolUses[0].toolUseId, "call_abc");
-  assert.equal(
-    resultMessage.userInputMessage.userInputMessageContext.toolResults[0].toolUseId,
-    "call_abc",
-  );
   assert.notEqual(
     requests[0].conversationState.conversationId,
     requests[1].conversationState.conversationId,
   );
+});
+
+test("observed invalid tool format strips compound IDs from calls and results", async () => {
+  const compoundId = "call_GXLRJu0eIxGFn3zSR3inUWh5|fc_031408d87ea3b6ab016abb32e85e1887d0a787c61392c4ea3e";
+  const requests = [];
+  const context = {
+    systemPrompt: "",
+    messages: [
+      { role: "user", content: "run eval", timestamp: 1 },
+      {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: compoundId,
+          name: "eval",
+          arguments: { language: "js", code: "1 + 1" },
+        }],
+        api: "openai-codex-responses",
+        provider: "chatgpt-subscription",
+        model: "gpt-5.6-sol",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "toolUse",
+        timestamp: 2,
+      },
+      {
+        role: "toolResult",
+        toolCallId: compoundId,
+        toolName: "eval",
+        content: [{ type: "text", text: "2" }],
+        isError: false,
+        timestamp: 3,
+      },
+      { role: "user", content: "continue", timestamp: 4 },
+    ],
+    tools: [],
+  };
+
+  await runStream(new Uint8Array(), context, {
+    onPayload(request) {
+      requests.push(request);
+      return request;
+    },
+  });
+
+  const assistant = requests[0].conversationState.history
+    .find((item) => item.assistantResponseMessage?.toolUses)?.assistantResponseMessage;
+  const result = requests[0].conversationState.currentMessage
+    .userInputMessage.userInputMessageContext.toolResults[0];
+  assert.equal(assistant.toolUses[0].toolUseId, "call_GXLRJu0eIxGFn3zSR3inUWh5");
+  assert.equal(result.toolUseId, "call_GXLRJu0eIxGFn3zSR3inUWh5");
 });
 
 test("Native aborts stalled payload hooks and removes listeners", async () => {
@@ -318,6 +370,42 @@ test("Native emits configured provider diagnostics and Retry-After markers", asy
   for await (const _event of retryStream) {}
   const retryResult = await retryStream.result();
   assert.match(retryResult.errorMessage, /\(retry-after-ms: 3000\)$/);
+});
+
+test("Native recovers a single credential from a transient Kiro 429", async () => {
+  const waits = [];
+  let fetchCalls = 0;
+  const recoveredBody = encodeFrame("assistantResponseEvent", { content: "RATE_LIMIT_RECOVERED" });
+  const { events, result } = await runStream(
+    recoveredBody,
+    textContext,
+    {
+      fetch: async () => {
+        fetchCalls += 1;
+        if (fetchCalls === 1) {
+          return new Response(JSON.stringify({ message: "Too many requests, please wait before trying again." }), {
+            status: 429,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return responseFor(recoveredBody);
+      },
+      delay: async (milliseconds) => {
+        waits.push(milliseconds);
+      },
+    },
+    {
+      rateLimitMaxRetries: 1,
+      rateLimitRetryBaseMs: 30_000,
+      rateLimitRetryMaxMs: 120_000,
+    },
+  );
+
+  assert.equal(fetchCalls, 2);
+  assert.deepEqual(waits, [30_000]);
+  assert.deepEqual(events, ["start", "text_start", "text_delta", "text_end", "done"]);
+  assert.deepEqual(result.content, [{ type: "text", text: "RATE_LIMIT_RECOVERED" }]);
+  assert.equal(result.stopReason, "stop");
 });
 
 test("Native normalizes top-level tool schema unions", async () => {

@@ -49,3 +49,19 @@ test("loadConfig drops cache checkpoint limits when prompt caching is explicitly
 
   assert.deepEqual(config.models[0].promptCaching, { supportsPromptCaching: false });
 });
+
+test("loadConfig bounds the transient Kiro rate-limit retry policy", () => {
+  const defaults = loadConfig(writeConfig({})).config;
+  assert.equal(defaults.rateLimitMaxRetries, 3);
+  assert.equal(defaults.rateLimitRetryBaseMs, 30_000);
+  assert.equal(defaults.rateLimitRetryMaxMs, 120_000);
+
+  const { config } = loadConfig(writeConfig({
+    rateLimitMaxRetries: -1,
+    rateLimitRetryBaseMs: 200_000,
+    rateLimitRetryMaxMs: 1_000,
+  }));
+  assert.equal(config.rateLimitMaxRetries, 3);
+  assert.equal(config.rateLimitRetryBaseMs, 200_000);
+  assert.equal(config.rateLimitRetryMaxMs, 200_000);
+});

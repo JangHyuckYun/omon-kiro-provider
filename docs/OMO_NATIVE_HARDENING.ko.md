@@ -108,8 +108,20 @@ Argument object 형태는 유지하면서 금지된 root schema 형태만 제거
 - HTTP status를 Native `providerDiagnostic`으로 변환
 - custom provider ID를 `errorMetadata.providerId`에 보존
 - HTTP 429의 `retry-after-ms`, 정수 `retry-after`, HTTP-date를 `(retry-after-ms: N)` marker로 변환
+- Kiro 429를 Native credential pool에 넘기기 전에 bounded retry
+  - 기본 3회
+  - 30초 exponential base
+  - 120초 per-wait cap
+  - server `Retry-After`가 있으면 cap 안에서 우선 반영
+  - parent abort/provider timeout으로 대기 중단 가능
+- 이 선행 retry가 모두 실패한 경우에만 최종 429를 Native에 전달
 - credential source별 refresh 가능 여부를 구분
 - `ksk_` Kiro API key에만 `tokentype: API_KEY` 헤더 추가
+
+이 경계가 필요한 이유는 Native single-credential rotation이 첫 429 뒤 slot을
+cooldown 처리하기 때문입니다. Provider가 즉시 429를 반환하면 같은 session의
+자동 continuation과 다른 session이 `No credential slots available`로 연쇄
+실패할 수 있습니다.
 
 ## 4. OMO Native engine patch
 
@@ -161,12 +173,13 @@ Engine patch가 새로 적용되거나 복원되면 OMO 프로세스를 재시�
 ```json
 {
   "packages": [
-    "git:github.com/JangHyuckYun/pi-kiro-provider@<FULL_COMMIT_SHA>"
+    "git:github.com/JangHyuckYun/pi-kiro-provider@v0.3.0-native.1"
   ]
 }
 ```
 
 `npm:pi-kiro-provider`는 npm upstream을 설치하므로 이 fork를 사용하지 않습니다.
+더 엄격한 재현성이 필요하면 tag 대신 검증된 전체 commit SHA를 사용합니다.
 
 ### 수동 설치
 
@@ -212,6 +225,20 @@ Builder ID, Google, GitHub 방식을 사용할 수 있습니다.
 ```bash
 cp config/config.example.json config.json
 ```
+
+Rate-limit 기본값:
+
+```json
+{
+  "requestTimeoutMs": 600000,
+  "rateLimitMaxRetries": 3,
+  "rateLimitRetryBaseMs": 30000,
+  "rateLimitRetryMaxMs": 120000
+}
+```
+
+`rateLimitRetryMaxMs`는 정규화 과정에서 base보다 작아지지 않습니다.
+`rateLimitMaxRetries: 0`은 provider-side retry를 끕니다.
 
 `config.json`은 package 교체 시 보존을 보장하지 않는 package-local 파일입니다. credential은 저장하지 말고 OAuth/환경 credential 경로를 사용하십시오.
 
@@ -289,23 +316,51 @@ Fresh OMO session에서:
 
 - Opus 5.5 선택
 - `todo`, `read`, `lsp_symbols` 등 서로 다른 tool 호출
+- 하나의 `task` batch로 병렬 child 2개 실행
+- mass-ulw SDK로 independent nodes와 dependent verify node 실행
+- 실제 session JSONL에서 모든 tool call/result ID가 match하는지 확인
 - schema/order 오류 부재
+- 429가 발생하면 provider가 configured backoff 후 동일 turn을 복구하거나,
+  retry budget 소진 뒤 최종 429 하나만 전달하는지 확인
 - 별도 Sonnet 4.6 session에서도 동일 확인
 
 ## 10. 2026-09-29 검증 근거
 
-로컬 hardening 당시 관측:
+로컬 hardening과 fork package 검증에서 관측:
 
-- compatibility suite: 12 pass, 0 fail, 58 assertions
+- repository `npm run check`: exit 0
+- fork regression suite: 40 pass, 0 fail
+- exact compound-ID RED: active npm copy는
+  `call_*|fc_*`를 그대로 전송; fork는 assistant tool use/result 양쪽을 동일
+  primary ID로 정규화
+- transient 429 RED: fetch 1회 후 실패; GREEN: injected scheduler로
+  30초 backoff를 관측하고 두 번째 fetch에서 동일 turn 복구
 - production bundle: exit 0
 - model catalog: Kiro 18개, Opus 5.5 정확히 1개
 - Opus 5.5 fresh TUI: `todo`, `read`, `lsp_symbols` 성공
 - Sonnet 4.6 fresh TUI: 동일 multi-tool 성공
 - GPT 5.6 Sol fresh TUI: 실제 `read` 성공
 - postinstall patcher: 2회 연속 exit 0, 두 번째 no-op
+- fork-only Opus 5.5 orchestrator session:
+  `01a0eb86-f597-7635-aa6a-023ee9faff47`
+  - provider/model: `kiro/claude-opus-5.5`
+  - Native tool calls/results: 15/15 match, unmatched 0, assistant error 0
+  - tools: `todo`, `read`, `lsp_symbols`, `task`, `eval`
+  - parallel children:
+    `st_01a0eb87 -> CHILD_ALPHA_OK`,
+    `st_01a0eb88 -> CHILD_BETA_OK`
+  - mass-ulw DAG:
+    `dag_4a16cbb2-113e-4d3d-941e-ad495840686f`
+  - waves: `alpha,beta` -> `verify`
+  - node outputs: `DAG_ALPHA_OK`, `DAG_BETA_OK`, `DAG_VERIFY_OK`
+  - final sentinel: `KIRO_ORCHESTRATOR_DAG_TOOLS_OK`
 - owned QA process/window/listener cleanup 완료
 
-이 저장소의 release 검증은 위 로컬 patch를 package source와 fixture로 이식한 뒤 다시 수행해야 합니다. 과거 증거만으로 GitHub package release가 검증되었다고 주장하지 않습니다.
+실서비스 429를 의도적으로 유발하지 않았으므로 live retry 발생 자체는 release
+evidence로 주장하지 않습니다. 대신 실제 실패 session
+`01a0eb58-8261-70a2-b8b2-8c535414322b`의 `429 -> No credential slots`
+연쇄를 재현하는 deterministic transport test와 이후 장시간 live orchestrator
+성공을 함께 사용합니다.
 
 ## 11. 알려진 제한
 
@@ -316,3 +371,5 @@ Fresh OMO session에서:
 5. 한 개의 매우 큰 retained turn은 summary 후에도 policy threshold 이상일 수 있습니다.
 6. 이 fork는 npm registry에 별도 배포되지 않았습니다.
 7. OMO update 후 provider postinstall이 자동 재실행된다고 가정하면 안 됩니다.
+8. 429 retry는 무한 재시도가 아닙니다. 기본 세 번 뒤에도 제한이 지속되면
+   마지막 429를 Native에 전달합니다.

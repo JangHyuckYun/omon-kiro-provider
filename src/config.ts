@@ -67,6 +67,9 @@ export interface ExtensionConfig {
   endpoint: KiroEndpoint;
   apiKey: string;
   requestTimeoutMs: number;
+  rateLimitMaxRetries: number;
+  rateLimitRetryBaseMs: number;
+  rateLimitRetryMaxMs: number;
   profileArn?: string;
   headers: Record<string, string>;
   models: KiroProviderModelConfig[];
@@ -154,6 +157,10 @@ const DEFAULT_OAUTH_CONFIG: KiroOAuthConfig = {
   },
 };
 
+const DEFAULT_RATE_LIMIT_MAX_RETRIES = 3;
+const DEFAULT_RATE_LIMIT_RETRY_BASE_MS = 30_000;
+const DEFAULT_RATE_LIMIT_RETRY_MAX_MS = 120_000;
+
 const THINKING_LEVEL_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 function stringOr(value: unknown, fallback: string): string {
@@ -162,6 +169,10 @@ function stringOr(value: unknown, fallback: string): string {
 
 function booleanOr(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function nonNegativeIntegerOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
 }
 
 function optionalBoolean(value: unknown, fallback: boolean | undefined): boolean | undefined {
@@ -370,6 +381,7 @@ export function loadConfig(extensionRoot: string): ConfigLoadResult {
   }
 
   const upstreamUrl = stringOr(raw.upstreamUrl, "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse");
+  const rateLimitRetryBaseMs = numberOr(raw.rateLimitRetryBaseMs, DEFAULT_RATE_LIMIT_RETRY_BASE_MS);
   return {
     config: {
       enabled: booleanOr(raw.enabled, true),
@@ -380,6 +392,12 @@ export function loadConfig(extensionRoot: string): ConfigLoadResult {
       endpoint: endpointOr(raw.endpoint, upstreamUrl),
       apiKey: stringOr(raw.apiKey, "$KIRO_ACCESS_TOKEN"),
       requestTimeoutMs: numberOr(raw.requestTimeoutMs, 600_000),
+      rateLimitMaxRetries: nonNegativeIntegerOr(raw.rateLimitMaxRetries, DEFAULT_RATE_LIMIT_MAX_RETRIES),
+      rateLimitRetryBaseMs,
+      rateLimitRetryMaxMs: Math.max(
+        rateLimitRetryBaseMs,
+        numberOr(raw.rateLimitRetryMaxMs, DEFAULT_RATE_LIMIT_RETRY_MAX_MS),
+      ),
       profileArn: optionalString(raw.profileArn),
       headers: sanitizeHeaderConfig(stringRecordOr(raw.headers), warnings, "headers") ?? {},
       models,
